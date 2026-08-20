@@ -12,9 +12,7 @@ from PySide6.QtGui import QGuiApplication, QCloseEvent
 
 from config import APP_NAME
 from core.signals import global_signals
-from core.settings_manager import SettingsManager
 from widgets.capsule_navbar import CapsuleNavBar
-from widgets.welcome_setup_dialog import WelcomeSetupDialog
 
 # ویوهای اصلی
 from views.dashboard_view import DashboardView
@@ -141,7 +139,6 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(860, 580)
         self.init_ui()
         self._connect_title_signals()
-        QTimer.singleShot(250, self._check_first_run)
 
     def update_window_title(self, is_active: bool = False, is_paused: bool = False):
         base = f"{APP_NAME} Pro"
@@ -170,7 +167,7 @@ class MainWindow(QMainWindow):
         top_header = self._build_top_header()
         main_layout.addWidget(top_header)
 
-        # کانتینر پشته‌ای صفحات ۸ گانه
+        # کانتینر پشته‌ای صفحات
         self.pages_stack = QStackedWidget()
         self.pages_stack.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
 
@@ -199,12 +196,6 @@ class MainWindow(QMainWindow):
         global_signals.navigate_and_focus_project.connect(self._go_to_projects_tab)
 
         self.capsule_nav.update_responsive_layout(self.width())
-
-    def _check_first_run(self):
-        settings = SettingsManager.load_settings()
-        if settings.get("is_first_run", True):
-            wizard = WelcomeSetupDialog(self)
-            wizard.exec()
 
     def _build_top_header(self) -> QFrame:
         header = QFrame()

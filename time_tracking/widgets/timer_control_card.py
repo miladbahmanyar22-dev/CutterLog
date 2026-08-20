@@ -14,7 +14,6 @@ from core.signals import global_signals
 
 
 def format_seconds_hms(seconds: int) -> str:
-    """تبدیل ثانیه به فرمت استاندارد HH:MM:SS"""
     h = seconds // 3600
     m = (seconds % 3600) // 60
     s = seconds % 60
@@ -22,7 +21,6 @@ def format_seconds_hms(seconds: int) -> str:
 
 
 class RollingDigitSlot(QWidget):
-    """تایل اختصاصی پیشخوان برای هر رقم با ماسک برش و افکت رول عمودی"""
     def __init__(self, font_name: str, font_size: int = 24, text_color: str = "#FFFFFF", parent=None):
         super().__init__(parent)
         self.font_name = font_name
@@ -74,26 +72,19 @@ class RollingDigitSlot(QWidget):
         w = float(self.width())
         h = float(self.height())
 
-        # ۱. رسم تایل پس‌زمینه پیشخوان (Badge Slot)
         slot_rect = QRectF(0, 0, w, h)
         painter.setPen(QColor(255, 255, 255, 15))
         painter.setBrush(QColor("#0B101D"))
         painter.drawRoundedRect(slot_rect, 6, 6)
 
-        # ۲. ماسک برش برای عدم خروج ارقام متحرک از کادر تایل
         painter.setClipRect(slot_rect)
-
         f = QFont(self.font_name, self.font_size, QFont.Weight.Bold)
         painter.setFont(f)
         painter.setPen(QColor(self.text_color_hex))
 
-        # ۳. رول عمودی ارقام
         if self._progress < 1.0:
-            # رقم قبلی در حال خروج به پایین
             offset_curr = self._progress * h
             painter.drawText(QRectF(0, offset_curr, w, h), Qt.AlignmentFlag.AlignCenter, self.current_char)
-
-            # رقم جدید در حال ورود از بالا
             offset_next = -h + (self._progress * h)
             painter.drawText(QRectF(0, offset_next, w, h), Qt.AlignmentFlag.AlignCenter, self.next_char)
         else:
@@ -111,6 +102,8 @@ class TimerControlCard(QFrame):
         self.project_title = "پروژه‌ای انتخاب نشده"
         self.studio_title = "—"
         self.clip_title = "کلیپ انتخاب نشده"
+        self.is_clip_locked = False
+        self.accumulated_spent_seconds = 0
         self.digital_font_name = self._load_digital_font()
         self.colon_visible = True
 
@@ -154,7 +147,7 @@ class TimerControlCard(QFrame):
         layout.setContentsMargins(18, 14, 18, 14)
         layout.setSpacing(10)
 
-        # ۱. ردیف بالا: بج وضعیت + کانتکست پروژه و استودیو
+        # ۱. ردیف بالا
         top_row = QHBoxLayout()
         top_row.setSpacing(10)
         top_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
@@ -179,7 +172,7 @@ class TimerControlCard(QFrame):
 
         layout.addLayout(top_row)
 
-        # ۲. پنل شیشه‌ای مرکزی ساعت پیشخوان (کاملاً LeftToRight برای ترتیب استاندارد HH:MM:SS)
+        # ۲. پنل دیجیتال
         timer_screen = QFrame()
         timer_screen.setObjectName("TimerScreenFrame")
         timer_screen.setFixedHeight(68)
@@ -196,27 +189,22 @@ class TimerControlCard(QFrame):
         screen_layout.setSpacing(4)
         screen_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # گروه ساعت (HH) - سفید
         self.slot_h1 = RollingDigitSlot(self.digital_font_name, text_color="#FFFFFF")
         self.slot_h2 = RollingDigitSlot(self.digital_font_name, text_color="#FFFFFF")
 
-        # دونقطه اول
         self.lbl_colon1 = QLabel(":")
         self.lbl_colon1.setFixedWidth(14)
         self.lbl_colon1.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_colon1.setStyleSheet(f"font-family:'{self.digital_font_name}', monospace; font-size:24px; font-weight:bold; color:#FFFFFF; background:transparent;")
 
-        # گروه دقیقه (MM) - سفید
         self.slot_m1 = RollingDigitSlot(self.digital_font_name, text_color="#FFFFFF")
         self.slot_m2 = RollingDigitSlot(self.digital_font_name, text_color="#FFFFFF")
 
-        # دونقطه دوم
         self.lbl_colon2 = QLabel(":")
         self.lbl_colon2.setFixedWidth(14)
         self.lbl_colon2.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_colon2.setStyleSheet(f"font-family:'{self.digital_font_name}', monospace; font-size:24px; font-weight:bold; color:#FBBF24; background:transparent;")
 
-        # گروه ثانیه (SS) - زرد/کهربایی
         self.slot_s1 = RollingDigitSlot(self.digital_font_name, text_color="#FBBF24")
         self.slot_s2 = RollingDigitSlot(self.digital_font_name, text_color="#FBBF24")
 
@@ -231,7 +219,7 @@ class TimerControlCard(QFrame):
 
         layout.addWidget(timer_screen)
 
-        # ۳. نوار دکمه‌های کنترل
+        # ۳. دکمه‌های کنترل
         btn_row = QHBoxLayout()
         btn_row.setSpacing(10)
         btn_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -255,8 +243,10 @@ class TimerControlCard(QFrame):
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #34D399, stop:1 #10B981);
                 border-color: #6EE7B7;
             }
-            QPushButton:pressed {
-                background-color: #047857;
+            QPushButton:disabled {
+                background-color: #1A2234;
+                color: #64748B;
+                border-color: rgba(255, 255, 255, 0.05);
             }
         """)
         self.btn_start.clicked.connect(self._handle_start)
@@ -304,6 +294,10 @@ class TimerControlCard(QFrame):
             }
             QPushButton:hover {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FBBF24, stop:1 #F59E0B);
+            }
+            QPushButton:disabled {
+                background-color: #1A2234;
+                color: #64748B;
             }
         """)
         self.btn_resume.clicked.connect(self._handle_resume)
@@ -369,18 +363,19 @@ class TimerControlCard(QFrame):
 
         animate = (self.engine.is_running and not self.engine.is_paused)
 
-        if not self.engine.is_running:
-            # حالت آماده به کار
+        if self.is_clip_locked:
+            color_hm = "#10B981"
+            color_s = "#059669"
+            colon_c = "#10B981"
+        elif not self.engine.is_running:
             color_hm = "#64748B"
             color_s = "#475569"
             colon_c = "#475569"
         elif self.engine.is_paused:
-            # حالت توقف موقت
             color_hm = "#F8FAFC"
             color_s = "#F59E0B"
             colon_c = "#F59E0B"
         else:
-            # حالت ثبت زمان زنده
             color_hm = "#FFFFFF"
             color_s = "#FBBF24"
             colon_c = "#FBBF24" if self.colon_visible else "rgba(251,191,36,0.2)"
@@ -410,10 +405,12 @@ class TimerControlCard(QFrame):
         global_signals.session_paused.connect(lambda _: self.update_display_state())
         global_signals.session_resumed.connect(lambda _: self.update_display_state())
 
-    def set_context(self, project_title: str, studio_title: str, clip_title: str):
+    def set_context(self, project_title: str, studio_title: str, clip_title: str, is_completed: bool = False, accumulated_seconds: int = 0):
         self.project_title = project_title
         self.studio_title = studio_title
         self.clip_title = clip_title
+        self.is_clip_locked = is_completed
+        self.accumulated_spent_seconds = accumulated_seconds
         self._update_context_label()
         self.update_display_state()
 
@@ -424,10 +421,37 @@ class TimerControlCard(QFrame):
             self.lbl_context.setText(f"پروژه انتخابی: <b style='color:#F8FAFC;'>{self.project_title}</b> | کلیپ: <span style='color:#818CF8;'>{self.clip_title}</span>")
 
     def _on_timer_tick(self, snap: dict):
-        self._render_timer_display(snap["active_seconds"])
+        total_time_to_display = self.accumulated_spent_seconds + snap["active_seconds"]
+        self._render_timer_display(total_time_to_display)
 
     def update_display_state(self):
         self._update_context_label()
+
+        if self.is_clip_locked:
+            self.pulse_anim.stop()
+            self.opacity_effect.setOpacity(1.0)
+            self.btn_start.setVisible(True)
+            self.btn_start.setEnabled(False)
+            self.btn_start.setText("کلیپ تکمیل شده (قفل)")
+            self.btn_pause.setVisible(False)
+            self.btn_resume.setVisible(False)
+            self.btn_finish_clip.setVisible(False)
+            self.lbl_status_badge.setText("✓ کلیپ تکمیل و قفل شده")
+            self.lbl_status_badge.setStyleSheet("""
+                font-family: 'Vazirmatn';
+                font-size: 11px;
+                font-weight: 700;
+                color: #10B981;
+                background-color: rgba(16, 185, 129, 0.15);
+                border: 1px solid rgba(16, 185, 129, 0.35);
+                border-radius: 13px;
+                padding: 0 14px;
+            """)
+            self._render_timer_display(self.accumulated_spent_seconds)
+            return
+
+        self.btn_start.setEnabled(True)
+        self.btn_start.setText("شروع جلسه کاری")
 
         if self.engine.is_running:
             self.btn_start.setVisible(False)
@@ -451,7 +475,7 @@ class TimerControlCard(QFrame):
                     border-radius: 13px;
                     padding: 0 14px;
                 """)
-                self._render_timer_display(self.engine.active_seconds)
+                self._render_timer_display(self.accumulated_spent_seconds + self.engine.active_seconds)
             else:
                 self.btn_pause.setVisible(True)
                 self.btn_resume.setVisible(False)
@@ -467,7 +491,7 @@ class TimerControlCard(QFrame):
                     border-radius: 13px;
                     padding: 0 14px;
                 """)
-                self._render_timer_display(self.engine.active_seconds)
+                self._render_timer_display(self.accumulated_spent_seconds + self.engine.active_seconds)
 
                 if self.pulse_anim.state() != QPropertyAnimation.State.Running:
                     self.pulse_anim.start()
@@ -491,13 +515,19 @@ class TimerControlCard(QFrame):
                 border-radius: 13px;
                 padding: 0 14px;
             """)
-            self._render_timer_display(0)
+            self._render_timer_display(self.accumulated_spent_seconds)
 
     def _handle_start(self):
+        if self.is_clip_locked:
+            global_signals.show_toast.emit("این کلیپ تکمیل شده و تایمر آن قفل است.", "warning")
+            return
         if not self.engine.current_project_id:
             global_signals.show_toast.emit("لطفاً ابتدا یک پروژه یا کلیپ را انتخاب کنید.", "warning")
             return
         self.engine.start_session(self.engine.current_project_id, self.engine.current_clip_id)
 
     def _handle_resume(self):
+        if self.is_clip_locked:
+            global_signals.show_toast.emit("این کلیپ تکمیل شده و تایمر آن قفل است.", "warning")
+            return
         self.engine.resume_session()

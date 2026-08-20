@@ -476,7 +476,7 @@ class AboutView(QWidget):
         s_layout.addWidget(lbl_s_title)
 
         specs_items = [
-            ("نسخه فعلی:", "1.0.1"),
+            ("نسخه فعلی:", "1.0.2"),
             ("وضعیت محصول:", "در حال توسعه فعال"),
             ("پلتفرم‌های هدف:", "Windows · macOS"),
             ("زبان و جهت رابط:", "فارسی (RTL)"),

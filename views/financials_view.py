@@ -3,6 +3,7 @@
 # ==================================================
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QFileDialog, QFrame,
@@ -100,7 +101,7 @@ class StudioLedgerCard(QFrame):
         fin_col2.addWidget(lbl_pct)
         layout.addLayout(fin_col2, stretch=2)
 
-        # دکمه‌های اکشن
+        # دکمه‌های اقدام
         btn_box = QHBoxLayout()
         btn_box.setSpacing(6)
 
@@ -302,10 +303,11 @@ class ReceivableProjectCard(QFrame):
 
 
 class TransactionLedgerCard(QFrame):
-    """کارت ثبت تراکنش مالی در دفتر کل"""
-    def __init__(self, tx_data: Dict[str, Any], parent=None):
+    """کارت ثبت تراکنش مالی در دفتر کل همراه با کد رهگیری و دکمه حذف"""
+    def __init__(self, tx_data: Dict[str, Any], on_delete_cb, parent=None):
         super().__init__(parent)
         self.tx_data = tx_data
+        self.on_delete_cb = on_delete_cb
         
         self.setObjectName("FinancialCardItem")
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -316,7 +318,7 @@ class TransactionLedgerCard(QFrame):
     def init_ui(self):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(18, 10, 18, 10)
-        layout.setSpacing(16)
+        layout.setSpacing(14)
         layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         col_tx = QVBoxLayout()
@@ -359,8 +361,11 @@ class TransactionLedgerCard(QFrame):
         if pt == "prepayment": pt_label = "پیش‌پرداخت اولیه"
         elif pt == "final_settlement": pt_label = "تسویه نهایی حساب"
 
-        lbl_pt = QLabel(f"نوع: <span style='color:#A5B4FC; font-weight:600;'>{pt_label}</span>")
-        lbl_pt.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11.5px; color: #94A3B8; border: none; background: transparent;")
+        tracking_val = self.tx_data.get("tracking_code")
+        tracking_info = f" • پیگیری: {to_persian_numbers(tracking_val)}" if tracking_val else ""
+
+        lbl_pt = QLabel(f"نوع: <span style='color:#A5B4FC; font-weight:600;'>{pt_label}</span>{tracking_info}")
+        lbl_pt.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11px; color: #94A3B8; border: none; background: transparent;")
         col_desc.addWidget(lbl_pt)
 
         lbl_note = QLabel(f"شرح: {self.tx_data.get('notes', '-')}")
@@ -374,6 +379,25 @@ class TransactionLedgerCard(QFrame):
         lbl_amt = QLabel(f"+ {format_toman(amount)}")
         lbl_amt.setStyleSheet("font-family: 'Vazirmatn'; font-size: 15px; font-weight: 800; color: #10B981; border: none; background: transparent;")
         layout.addWidget(lbl_amt)
+
+        # دکمه حذف تراکنش اشتباه
+        btn_del = QPushButton()
+        btn_del.setIcon(IconProvider.get_icon("trash", "#EF4444", size=13))
+        btn_del.setFixedSize(28, 28)
+        btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_del.setToolTip("حذف این تراکنش مالی")
+        btn_del.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(239, 68, 68, 0.12);
+                border: 1px solid rgba(239, 68, 68, 0.25);
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #EF4444;
+            }
+        """)
+        btn_del.clicked.connect(lambda: self.on_delete_cb(self.tx_data["id"], amount))
+        layout.addWidget(btn_del)
 
         self._apply_style()
 
@@ -826,7 +850,7 @@ class FinancialsView(QWidget):
             return
 
         for t in transactions:
-            card = TransactionLedgerCard(t)
+            card = TransactionLedgerCard(t, on_delete_cb=self._handle_delete_transaction)
             self.transactions_layout.addWidget(card)
 
     def _render_monthly_cards(self, monthly_data: List[dict]):
@@ -841,6 +865,21 @@ class FinancialsView(QWidget):
         for m in monthly_data:
             card = MonthlyPerformanceCard(m)
             self.monthly_cards_layout.addWidget(card)
+
+    def _handle_delete_transaction(self, transaction_id: int, amount: int):
+        if StudioConfirmDialog.ask(
+            self.window(),
+            title="حذف تراکنش مالی",
+            message=f"آیا از حذف تراکنش دریافتی به مبلغ {format_toman(amount)} اطمینان دارید؟",
+            details="پس از حذف، این مبلغ مجدداً به عنوان مانده بدهی پروژه و استودیو لحاظ خواهد شد.",
+            confirm_text="حذف تراکنش",
+            is_danger=True,
+            icon_name="trash"
+        ):
+            if FinanceController.delete_transaction(transaction_id):
+                global_signals.transaction_recorded.emit(0)
+                global_signals.show_toast.emit("تراکنش مالی با موفقیت حذف شد.", "info")
+                self.refresh_all_financial_data()
 
     def _open_new_transaction_dialog(self):
         diag = NewTransactionDialog(None, None, self.window())

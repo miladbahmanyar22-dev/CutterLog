@@ -103,6 +103,8 @@ class DatabaseManager:
                     conn.execute(text("ALTER TABLE transactions ADD COLUMN revision_id INTEGER REFERENCES project_revisions(id)"))
                 if "payment_type" not in columns:
                     conn.execute(text("ALTER TABLE transactions ADD COLUMN payment_type VARCHAR(50) DEFAULT 'stage_payment'"))
+                if "tracking_code" not in columns:
+                    conn.execute(text("ALTER TABLE transactions ADD COLUMN tracking_code VARCHAR(100)"))
             except Exception as e:
                 print(f"Migration Notice (transactions): {e}")
 
@@ -114,32 +116,6 @@ class DatabaseManager:
                     conn.execute(text("ALTER TABLE project_revisions ADD COLUMN extra_fee BIGINT DEFAULT 0"))
             except Exception as e:
                 print(f"Migration Notice (project_revisions): {e}")
-
-            # ---------------- جدول work_sessions ----------------
-            try:
-                result = conn.execute(text("PRAGMA table_info(work_sessions)")).fetchall()
-                if result:
-                    columns = [row[1] for row in result]
-                    if "active_duration" not in columns:
-                        conn.execute(text("ALTER TABLE work_sessions ADD COLUMN active_duration INTEGER DEFAULT 0"))
-                    if "paused_duration" not in columns:
-                        conn.execute(text("ALTER TABLE work_sessions ADD COLUMN paused_duration INTEGER DEFAULT 0"))
-                    if "idle_duration" not in columns:
-                        conn.execute(text("ALTER TABLE work_sessions ADD COLUMN idle_duration INTEGER DEFAULT 0"))
-                    if "total_duration" not in columns:
-                        conn.execute(text("ALTER TABLE work_sessions ADD COLUMN total_duration INTEGER DEFAULT 0"))
-                    if "stage_name" not in columns:
-                        conn.execute(text("ALTER TABLE work_sessions ADD COLUMN stage_name VARCHAR(50) DEFAULT 'Editing'"))
-                    if "status" not in columns:
-                        conn.execute(text("ALTER TABLE work_sessions ADD COLUMN status VARCHAR(50) DEFAULT 'active'"))
-                    if "note" not in columns:
-                        conn.execute(text("ALTER TABLE work_sessions ADD COLUMN note TEXT"))
-                    if "is_manual" not in columns:
-                        conn.execute(text("ALTER TABLE work_sessions ADD COLUMN is_manual BOOLEAN DEFAULT 0"))
-                    if "is_clip_completed" not in columns:
-                        conn.execute(text("ALTER TABLE work_sessions ADD COLUMN is_clip_completed BOOLEAN DEFAULT 0"))
-            except Exception as e:
-                print(f"Migration Notice (work_sessions): {e}")
 
     @contextmanager
     def get_session(self) -> Generator[Session, None, None]:

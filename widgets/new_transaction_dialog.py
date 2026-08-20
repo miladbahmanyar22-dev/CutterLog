@@ -23,7 +23,7 @@ from widgets.studio_dialog_base import StudioBaseDialog, StudioConfirmDialog
 
 
 class NewTransactionDialog(StudioBaseDialog):
-    """دیالوگ مدرن استودیو برای ثبت واریزی و تسویه حساب"""
+    """دیالوگ مدرن استودیو برای ثبت واریزی و تسویه مالی همراه با کد رهگیری"""
     def __init__(self, target_project_id: Optional[int] = None, target_client_id: Optional[int] = None, parent=None):
         super().__init__(parent=parent)
         self.target_project_id = target_project_id
@@ -63,7 +63,7 @@ class NewTransactionDialog(StudioBaseDialog):
     def init_ui(self):
         self.build_header(
             "ثبت واریزی و تسویه مالی", 
-            "تسویه هوشمند کل بدهی استودیو (به ترتیب زمانی) یا پروژه مشخص", 
+            "تسویه هوشمند کل بدهی استودیو (FIFO) یا پروژه مشخص", 
             icon_name="dollar", 
             icon_color="#10B981"
         )
@@ -155,9 +155,9 @@ class NewTransactionDialog(StudioBaseDialog):
         self.lbl_amount_preview.setStyleSheet("font-size: 11px; color: #10B981; font-weight: 600; padding-right: 2px;")
         self.container_layout.addWidget(self.lbl_amount_preview)
 
-        # ۴. نوع پرداخت و تاریخ
-        row_type_date = QHBoxLayout()
-        row_type_date.setSpacing(10)
+        # ۴. نوع پرداخت و کد پیگیری
+        row_type_code = QHBoxLayout()
+        row_type_code.setSpacing(10)
 
         col_type = QVBoxLayout()
         col_type.setSpacing(4)
@@ -168,7 +168,22 @@ class NewTransactionDialog(StudioBaseDialog):
         self.combo_type.addItem("پیش‌پرداخت اولیه", PaymentTypeEnum.PREPAYMENT)
         self.combo_type.addItem("تسویه نهایی حساب", PaymentTypeEnum.FINAL_SETTLEMENT)
         col_type.addWidget(self.combo_type)
-        row_type_date.addLayout(col_type, stretch=1)
+        row_type_code.addLayout(col_type, stretch=1)
+
+        col_code = QVBoxLayout()
+        col_code.setSpacing(4)
+        col_code.addWidget(QLabel("شماره پیگیری / ارجاع بانکی (اختیاری):"))
+        self.input_tracking = QLineEdit()
+        self.input_tracking.setFixedHeight(36)
+        self.input_tracking.setPlaceholderText("مثال: 984521 / ۴ رقم آخر کارت")
+        col_code.addWidget(self.input_tracking)
+        row_type_code.addLayout(col_code, stretch=1)
+
+        self.container_layout.addLayout(row_type_code)
+
+        # ۵. تاریخ و توضیحات
+        row_date_note = QHBoxLayout()
+        row_date_note.setSpacing(10)
 
         col_date = QVBoxLayout()
         col_date.setSpacing(4)
@@ -178,17 +193,20 @@ class NewTransactionDialog(StudioBaseDialog):
         today_j = jdatetime.date.today().strftime("%Y/%m/%d")
         self.input_date.setText(to_persian_numbers(today_j))
         col_date.addWidget(self.input_date)
-        row_type_date.addLayout(col_date, stretch=1)
+        row_date_note.addLayout(col_date, stretch=1)
 
-        self.container_layout.addLayout(row_type_date)
-
-        self.container_layout.addWidget(QLabel("توضیحات واریز (اختیاری):"))
+        col_note = QVBoxLayout()
+        col_note.setSpacing(4)
+        col_note.addWidget(QLabel("توضیحات واریز (اختیاری):"))
         self.input_note = QLineEdit()
         self.input_note.setFixedHeight(36)
-        self.input_note.setPlaceholderText("مثال: واریز کارت به کارت / تسویه حساب دوره‌ای")
-        self.container_layout.addWidget(self.input_note)
+        self.input_note.setPlaceholderText("مثال: واریز کارت به کارت / تسویه حساب")
+        col_note.addWidget(self.input_note)
+        row_date_note.addLayout(col_note, stretch=2)
 
-        # ۵. دکمه‌های اقدام
+        self.container_layout.addLayout(row_date_note)
+
+        # ۶. دکمه‌های اقدام
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(8)
 
@@ -338,6 +356,7 @@ class NewTransactionDialog(StudioBaseDialog):
 
         amount = int(amount_clean)
         pay_type = self.combo_type.currentData()
+        tracking = self.input_tracking.text().strip()
         note = self.input_note.text().strip()
 
         if self.rb_studio.isChecked():
@@ -350,7 +369,8 @@ class NewTransactionDialog(StudioBaseDialog):
                 client_id=client_id,
                 total_amount=amount,
                 payment_type=pay_type,
-                notes=note
+                notes=note,
+                tracking_code=tracking
             )
             global_signals.transaction_recorded.emit(0)
             global_signals.client_balance_updated.emit(client_id)
@@ -369,13 +389,14 @@ class NewTransactionDialog(StudioBaseDialog):
                     amount=amount,
                     payment_type=pay_type,
                     notes=note,
+                    tracking_code=tracking or None,
                     paid_at=datetime.utcnow()
                 )
                 session.add(trx)
                 ProjectController.log_event(
                     session, project_id, "TRANSACTION_ADDED", 
                     f"دریافت مبلغ {format_toman(amount)}", 
-                    note or "واریز ثبت شد."
+                    f"شماره پیگیری: {tracking or '-'} | {note or 'واریز ثبت شد.'}"
                 )
                 session.commit()
                 trx_id = trx.id

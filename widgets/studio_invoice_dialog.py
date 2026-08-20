@@ -21,7 +21,7 @@ from widgets.studio_dialog_base import StudioBaseDialog, StudioConfirmDialog
 
 
 class StudioInvoiceImageExporter:
-    """موتور رندرینگ فاکتور رسمی تجمیعی استودیو با وضوح بالا و ابعاد پویا"""
+    """موتور رندرینگ فاکتور رسمی تجمیعی استودیو با برچسب گرافیکی وضعیت تسویه"""
     @staticmethod
     def export_invoice_image(client_id: int, output_path: str) -> bool:
         try:
@@ -47,7 +47,7 @@ class StudioInvoiceImageExporter:
             for f in [font_title, font_section, font_body, font_bold, font_meta]:
                 f.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
 
-            projects_count = len(unsettled_list)
+            projects_count = max(1, len(unsettled_list))
             h_header = 140.0 + 20.0
             h_table = 45.0 + (projects_count * 34.0) + 45.0
             h_bank = 135.0
@@ -88,13 +88,18 @@ class StudioInvoiceImageExporter:
                 logo_pix = QPixmap(logo_path).scaled(80, 80, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                 painter.drawPixmap(int(margin + 24), int(current_y + 30), logo_pix)
             else:
-                b_rect = QRectF(margin + 24, current_y + 35, 140, 32)
-                painter.setPen(QPen(QColor("#F59E0B"), 1))
-                painter.setBrush(QBrush(QColor(245, 158, 11, 25)))
+                is_fully_settled = (summary.get("total_remaining", 0) == 0)
+                badge_bg = QColor(16, 185, 129, 30) if is_fully_settled else QColor(245, 158, 11, 25)
+                badge_col = QColor("#10B981") if is_fully_settled else QColor("#F59E0B")
+                badge_text = "تسویه کامل شده ✓" if is_fully_settled else "صورت‌حساب رسمی"
+
+                b_rect = QRectF(margin + 24, current_y + 35, 150, 34)
+                painter.setPen(QPen(badge_col, 1))
+                painter.setBrush(QBrush(badge_bg))
                 painter.drawRoundedRect(b_rect, 6, 6)
                 painter.setFont(font_bold)
-                painter.setPen(QColor("#F59E0B"))
-                painter.drawText(b_rect, Qt.AlignmentFlag.AlignCenter, "صورت‌حساب رسمی")
+                painter.setPen(badge_col)
+                painter.drawText(b_rect, Qt.AlignmentFlag.AlignCenter, badge_text)
 
             current_y += 160.0
 
@@ -122,17 +127,23 @@ class StudioInvoiceImageExporter:
             painter.drawLine(int(margin), int(row_y + 26), int(margin + content_w), int(row_y + 26))
 
             row_y += 34.0
-            for idx, p in enumerate(unsettled_list):
+            if not unsettled_list:
                 painter.setFont(font_body)
-                painter.setPen(QColor("#F8FAFC"))
-                painter.drawText(QRectF(margin + content_w - 60, row_y, 50, 22), Qt.AlignmentFlag.AlignCenter, to_persian_numbers(idx + 1))
-                painter.drawText(QRectF(margin + content_w - 450, row_y, 380, 22), Qt.AlignmentFlag.AlignRight, f"{p['title']}  ({to_persian_numbers(p['project_number'])})")
-                painter.drawText(QRectF(margin + 380, row_y, 160, 22), Qt.AlignmentFlag.AlignCenter, format_toman(p['total_fee']))
-                painter.drawText(QRectF(margin + 200, row_y, 160, 22), Qt.AlignmentFlag.AlignCenter, format_toman(p['total_paid']))
-                painter.setFont(font_bold)
-                painter.setPen(QColor("#F59E0B"))
-                painter.drawText(QRectF(margin + 20, row_y, 160, 22), Qt.AlignmentFlag.AlignLeft, format_toman(p['remaining']))
+                painter.setPen(QColor("#10B981"))
+                painter.drawText(QRectF(margin + 20, row_y, content_w - 40, 22), Qt.AlignmentFlag.AlignCenter, "تمامی پروژه‌های این استودیو به طور کامل تسویه شده‌اند و مانده بدهی وجود ندارد.")
                 row_y += 34.0
+            else:
+                for idx, p in enumerate(unsettled_list):
+                    painter.setFont(font_body)
+                    painter.setPen(QColor("#F8FAFC"))
+                    painter.drawText(QRectF(margin + content_w - 60, row_y, 50, 22), Qt.AlignmentFlag.AlignCenter, to_persian_numbers(idx + 1))
+                    painter.drawText(QRectF(margin + content_w - 450, row_y, 380, 22), Qt.AlignmentFlag.AlignRight, f"{p['title']}  ({to_persian_numbers(p['project_number'])})")
+                    painter.drawText(QRectF(margin + 380, row_y, 160, 22), Qt.AlignmentFlag.AlignCenter, format_toman(p['total_fee']))
+                    painter.drawText(QRectF(margin + 200, row_y, 160, 22), Qt.AlignmentFlag.AlignCenter, format_toman(p['total_paid']))
+                    painter.setFont(font_bold)
+                    painter.setPen(QColor("#F59E0B"))
+                    painter.drawText(QRectF(margin + 20, row_y, 160, 22), Qt.AlignmentFlag.AlignLeft, format_toman(p['remaining']))
+                    row_y += 34.0
 
             painter.setPen(QPen(QColor(255, 255, 255, 15), 1))
             painter.drawLine(int(margin), int(row_y), int(margin + content_w), int(row_y))
@@ -202,7 +213,7 @@ class StudioInvoiceImageExporter:
 
 
 class StudioInvoiceDialog(StudioBaseDialog):
-    """دیالوگ پیش‌نمایش و صدور فاکتور رسمی تجمیعی استودیو با زبان بصری استودیو"""
+    """دیالوگ پیش‌نمایش و صدور فاکتور رسمی تجمیعی استودیو"""
     def __init__(self, client_id: int, parent=None):
         super().__init__(parent=parent)
         self.client_id = client_id
@@ -232,12 +243,11 @@ class StudioInvoiceDialog(StudioBaseDialog):
         
         self.build_header(
             f"صورت‌حساب رسمی بدهی: {self.client_name}", 
-            f"صادرکننده: {studio_brand}   |   تاریخ صدور: {today_str}",
+            f"صادرکننده: {studio_brand}    |    تاریخ صدور: {today_str}",
             icon_name="dollar", 
             icon_color="#F59E0B"
         )
 
-        # محتوای اسکرول‌پذیر
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)

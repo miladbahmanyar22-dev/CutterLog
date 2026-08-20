@@ -30,8 +30,8 @@ from sqlalchemy import select, func
 
 class NleStyleTimelineBar(QWidget):
     """
-    رندر بصری تایم‌لاین سگمنتی پروژه به سبک Premiere و DaVinci
-    نمایش مدت‌زمان اختصاص‌یافته، وضعیت تکمیل و کلیپ فعال
+    رندر بصری تایم‌لاین سگمنتی متناسب با طول زمان واقعی هر کلیپ
+    فقط کلیپ‌های دارای سابقه زمانی نمایش داده می‌شوند و متن داخل آن‌ها کاملاً وسط‌چین است.
     """
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -41,7 +41,8 @@ class NleStyleTimelineBar(QWidget):
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
 
     def set_timeline_data(self, clips: List[dict], active_clip_id: Optional[int] = None):
-        self.clips_data = clips
+        # فیلتر کلیپ‌های دارای سابقه زمانی (بیشتر از صفر ثانیه)
+        self.clips_data = [c for c in clips if c.get("spent_seconds", 0) > 0]
         self.active_clip_id = active_clip_id
         self.update()
 
@@ -67,25 +68,34 @@ class NleStyleTimelineBar(QWidget):
         if not self.clips_data:
             painter.setPen(QColor("#64748B"))
             painter.setFont(QFont("Vazirmatn", 10))
-            painter.drawText(QRectF(0, track_y, w, track_h), Qt.AlignmentFlag.AlignCenter, "کلیپی برای نمایش تایم‌لاین پروژه انتخاب نشده است.")
+            painter.drawText(QRectF(0, track_y, w, track_h), Qt.AlignmentFlag.AlignCenter, "هیچ زمان ثبت‌شده‌ای برای کلیپ‌های این پروژه وجود ندارد.")
             painter.end()
             return
 
         total_clips = len(self.clips_data)
+        total_time = sum(c.get("spent_seconds", 0) for c in self.clips_data)
         spacing = 4.0
         available_w = max(10.0, w - (spacing * (total_clips - 1)))
-        slot_w = available_w / max(1, total_clips)
+
+        # تخصیص طول متناسب با زمان با حفظ حداقل طول برای خوانایی متن
+        min_width_per_clip = 95.0
+        if total_clips * min_width_per_clip > available_w:
+            min_width_per_clip = available_w / total_clips
+
+        remaining_w = available_w - (total_clips * min_width_per_clip)
+        current_x = 0.0
 
         for idx, clip in enumerate(self.clips_data):
-            x = idx * (slot_w + spacing)
-            rect = QRectF(x, track_y, slot_w, track_h)
+            dur_sec = clip.get("spent_seconds", 0)
+            time_ratio = (dur_sec / total_time) if total_time > 0 else (1.0 / total_clips)
+            slot_w = min_width_per_clip + (remaining_w * time_ratio if remaining_w > 0 else 0)
+
+            rect = QRectF(current_x, track_y, slot_w, track_h)
 
             is_active = (clip.get("id") == self.active_clip_id)
             is_completed = clip.get("is_completed", False)
-            dur_sec = clip.get("spent_seconds", 0)
 
-            # گرادینت بدنه قطعه تایم‌لاین
-            grad = QLinearGradient(x, track_y, x, track_y + track_h)
+            grad = QLinearGradient(current_x, track_y, current_x, track_y + track_h)
             if is_active:
                 grad.setColorAt(0.0, QColor("#6E62F9"))
                 grad.setColorAt(1.0, QColor("#4F46E5"))
@@ -103,23 +113,24 @@ class NleStyleTimelineBar(QWidget):
             painter.setBrush(QBrush(grad))
             painter.drawRoundedRect(rect, 4, 4)
 
-            # نام قطعه
-            painter.setFont(QFont("Vazirmatn", 9, QFont.Weight.Bold if is_active else QFont.Weight.Normal))
-            painter.setPen(QColor("#FFFFFF" if (is_active or is_completed) else "#CBD5E1"))
+            # محتوای کاملاً وسط‌چین (Center Aligned)
             clip_name = clip.get("name", f"Clip {idx+1}")
-            painter.drawText(QRectF(x + 4, track_y + 2, slot_w - 8, 14), Qt.AlignmentFlag.AlignRight, clip_name)
+            dur_str = format_seconds_hms(dur_sec)
 
-            # مدت‌زمان ثبت‌شده روی قطعه
-            dur_str = format_seconds_hms(dur_sec) if dur_sec > 0 else "--:--"
+            painter.setFont(QFont("Vazirmatn", 8.5, QFont.Weight.Bold if is_active else QFont.Weight.Normal))
+            painter.setPen(QColor("#FFFFFF" if (is_active or is_completed) else "#CBD5E1"))
+            painter.drawText(QRectF(current_x + 2, track_y + 2, slot_w - 4, 14), Qt.AlignmentFlag.AlignCenter, clip_name)
+
             painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
-            painter.setPen(QColor("#FBBF24" if is_active else ("#E2E8F0" if is_completed else "#64748B")))
-            painter.drawText(QRectF(x + 4, track_y + 16, slot_w - 8, 14), Qt.AlignmentFlag.AlignRight, to_persian_numbers(dur_str))
+            painter.setPen(QColor("#FBBF24" if is_active else ("#E2E8F0" if is_completed else "#94A3B8")))
+            painter.drawText(QRectF(current_x + 2, track_y + 16, slot_w - 4, 14), Qt.AlignmentFlag.AlignCenter, to_persian_numbers(dur_str))
+
+            current_x += slot_w + spacing
 
         painter.end()
 
 
 class ProjectTimelineDashboardCard(QFrame):
-    """کارت جامع مینی‌تایم‌لاین گرافیکی قطعات پروژه در حال تدوین"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -141,7 +152,6 @@ class ProjectTimelineDashboardCard(QFrame):
         layout.setContentsMargins(14, 10, 14, 10)
         layout.setSpacing(6)
 
-        # نوار اطلاعات بالای تایم‌لاین
         top_row = QHBoxLayout()
         top_row.setSpacing(8)
 
@@ -161,7 +171,6 @@ class ProjectTimelineDashboardCard(QFrame):
 
         layout.addLayout(top_row)
 
-        # ویجت رندرینگ NLE
         self.timeline_render = NleStyleTimelineBar(self)
         layout.addWidget(self.timeline_render)
 
@@ -181,12 +190,10 @@ class ProjectTimelineDashboardCard(QFrame):
             clips = session.scalars(select(ProjectClipItem).where(ProjectClipItem.project_id == project_id)).all()
 
             for c in clips:
-                # محاسبه زمان ثبت‌شده برای این کلیپ در تمام سشن‌ها
                 spent_sec = session.execute(
                     select(func.sum(WorkSession.active_duration)).where(WorkSession.clip_id == c.id)
                 ).scalar() or 0
 
-                # اضافه کردن ثانیه‌های زنده اگر سشن در حال اجرا باشد
                 engine = TimeTrackingEngine.instance()
                 if engine.is_running and not engine.is_paused and engine.current_clip_id == c.id:
                     spent_sec += engine.active_seconds
@@ -205,7 +212,6 @@ class ProjectTimelineDashboardCard(QFrame):
 
 
 class RetroactivePromptBanner(QFrame):
-    """بنر تعاملی جبران زمان کاری خارج از محیط تدوین"""
     def __init__(self, on_accept_cb, on_dismiss_cb, parent=None):
         super().__init__(parent)
         self.on_accept_cb = on_accept_cb
@@ -276,7 +282,6 @@ class RetroactivePromptBanner(QFrame):
 
 
 class CompactSummaryCard(QFrame):
-    """کارت خلاصه روزانه"""
     def __init__(self, title: str, main_val: str, sub_val: str, progress_ratio: float = 0.0, accent_color: str = "#818CF8", on_settings_cb=None, parent=None):
         super().__init__(parent)
         self.setObjectName("CompactSummaryCard")
@@ -337,20 +342,31 @@ class CompactSummaryCard(QFrame):
 
 
 class GridClipButton(QPushButton):
-    def __init__(self, clip_id: int, clip_name: str, is_completed: bool, is_active: bool = False, on_click_cb=None, parent=None):
+    def __init__(self, clip_id: int, clip_name: str, is_completed: bool, spent_seconds: int = 0, is_active: bool = False, on_click_cb=None, parent=None):
         super().__init__(parent)
         self.clip_id = clip_id
         self.clip_name = clip_name
+        self.spent_seconds = spent_seconds
+        self.is_completed = is_completed
         self.on_click_cb = on_click_cb
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedHeight(34)
+        self.setFixedHeight(36)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-        self.setText(clip_name)
+        self._update_text()
         self.set_active_state(is_active, is_completed)
         self.clicked.connect(lambda: self.on_click_cb(self.clip_id, self.clip_name) if self.on_click_cb else None)
 
+    def _update_text(self):
+        time_badge = f" ({to_persian_numbers(format_seconds_hms(self.spent_seconds))})" if self.spent_seconds > 0 else ""
+        self.setText(f"{self.clip_name}{time_badge}")
+
+    def update_spent_seconds(self, seconds: int):
+        self.spent_seconds = seconds
+        self._update_text()
+
     def set_active_state(self, is_active: bool, is_completed: bool = False):
+        self.is_completed = is_completed
         if is_active:
             self.setStyleSheet("""
                 QPushButton {
@@ -359,13 +375,13 @@ class GridClipButton(QPushButton):
                     color: #FFFFFF;
                     border: 1px solid #8B80F9;
                     border-radius: 6px;
-                    font-size: 12px;
+                    font-size: 11.5px;
                     font-weight: 800;
                     padding: 0 8px;
                 }
             """)
         else:
-            border_color = "rgba(16, 185, 129, 0.3)" if is_completed else "rgba(255, 255, 255, 0.04)"
+            border_color = "rgba(16, 185, 129, 0.35)" if is_completed else "rgba(255, 255, 255, 0.04)"
             text_color = "#34D399" if is_completed else "#E2E8F0"
             self.setStyleSheet(f"""
                 QPushButton {{
@@ -484,7 +500,7 @@ class TimeTrackingView(QWidget):
         main_layout.setContentsMargins(20, 14, 20, 14)
         main_layout.setSpacing(10)
 
-        # ۱. بنر اعلان هوشمند جبران زمان
+        # ۱. بنر جبران زمان
         self.retro_banner = RetroactivePromptBanner(
             on_accept_cb=self._on_retroactive_accepted,
             on_dismiss_cb=lambda: None,
@@ -492,7 +508,7 @@ class TimeTrackingView(QWidget):
         )
         main_layout.addWidget(self.retro_banner)
 
-        # ۲. سربرگ اصلی
+        # ۲. سربرگ
         header_row = QHBoxLayout()
         title_col = QVBoxLayout()
         title_col.setSpacing(1)
@@ -538,7 +554,7 @@ class TimeTrackingView(QWidget):
         self.summary_row.addWidget(self.card_focus)
         main_layout.addLayout(self.summary_row)
 
-        # ۴. بخش میانی: Hero Timer + System Monitoring
+        # ۴. Hero Timer + System Monitoring
         mid_row = QHBoxLayout()
         mid_row.setSpacing(10)
 
@@ -568,10 +584,9 @@ class TimeTrackingView(QWidget):
         c_lay.setSpacing(10)
         c_lay.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        # دکمه‌های انتخاب کلیپ
         c_lay.addWidget(self._build_project_clip_container())
 
-        # کارت تایم‌لاین گرافیکی قطعات تدوین (مینی‌تایم‌لاین جدید)
+        # کارت تایم‌لاین گرافیکی قطعات
         self.nle_timeline_card = ProjectTimelineDashboardCard(self)
         c_lay.addWidget(self.nle_timeline_card)
 
@@ -692,7 +707,6 @@ class TimeTrackingView(QWidget):
             progress_ratio=ratio
         )
 
-        # بروزرسانی زنده تایم‌لاین پروژه حین تیک تایمر
         cur_proj = next((p for p in self.cached_uncompleted_projects if p["id"] == self.selected_project_id), None)
         if cur_proj and hasattr(self, "nle_timeline_card"):
             self.nle_timeline_card.update_project_timeline(
@@ -792,7 +806,7 @@ class TimeTrackingView(QWidget):
         cur_proj = next((p for p in self.cached_uncompleted_projects if p["id"] == self.selected_project_id), None)
         if not cur_proj:
             self.lbl_project_header.setText("پروژه‌ای برای انجام باقی نمانده است ✓")
-            self.timer_card.set_context("پروژه‌ای انتخاب نشده", "—", "—")
+            self.timer_card.set_context("پروژه‌ای انتخاب نشده", "—", "—", False, 0)
             if hasattr(self, "nle_timeline_card"):
                 self.nle_timeline_card.update_project_timeline(None, "")
             return
@@ -809,25 +823,46 @@ class TimeTrackingView(QWidget):
                 self.engine.select_context(cur_proj["id"], first_uncompleted["id"])
 
         columns_count = 5
-        for idx, c in enumerate(clips):
-            is_active = (self.engine.current_clip_id == c["id"])
-            btn = GridClipButton(
-                clip_id=c["id"],
-                clip_name=c["name"],
-                is_completed=c["is_completed"],
-                is_active=is_active,
-                on_click_cb=self._select_clip
-            )
-            row = idx // columns_count
-            col = idx % columns_count
-            self.clips_grid_layout.addWidget(btn, row, col)
-            self.clip_buttons.append(btn)
+        active_clip_spent_seconds = 0
+        active_clip_is_completed = False
+
+        with db.get_session() as session:
+            for idx, c in enumerate(clips):
+                is_active = (self.engine.current_clip_id == c["id"])
+                
+                # محاسبه مجموع زمان ثبت‌شده برای این کلیپ
+                spent_sec = session.execute(
+                    select(func.sum(WorkSession.active_duration)).where(WorkSession.clip_id == c["id"])
+                ).scalar() or 0
+
+                if is_active:
+                    active_clip_spent_seconds = spent_sec
+                    active_clip_is_completed = c["is_completed"]
+
+                btn = GridClipButton(
+                    clip_id=c["id"],
+                    clip_name=c["name"],
+                    is_completed=c["is_completed"],
+                    spent_seconds=spent_sec,
+                    is_active=is_active,
+                    on_click_cb=self._select_clip
+                )
+                row = idx // columns_count
+                col = idx % columns_count
+                self.clips_grid_layout.addWidget(btn, row, col)
+                self.clip_buttons.append(btn)
 
         active_clip = next((c for c in clips if c["id"] == self.engine.current_clip_id), None)
         active_clip_name = active_clip["name"] if active_clip else "—"
-        self.timer_card.set_context(couple_name, studio_name, active_clip_name)
+        
+        self.timer_card.set_context(
+            couple_name, 
+            studio_name, 
+            active_clip_name, 
+            is_completed=active_clip_is_completed, 
+            accumulated_seconds=active_clip_spent_seconds
+        )
 
-        # بروزرسانی تایم‌لاین گرافیکی قطعات
         if hasattr(self, "nle_timeline_card"):
             self.nle_timeline_card.update_project_timeline(
                 self.selected_project_id,
@@ -839,8 +874,25 @@ class TimeTrackingView(QWidget):
         self.engine.select_context(self.selected_project_id, clip_id)
         
         cur_proj = next((p for p in self.cached_uncompleted_projects if p["id"] == self.selected_project_id), None)
+        active_spent_sec = 0
+        active_is_completed = False
+
+        with db.get_session() as session:
+            clip_obj = session.get(ProjectClipItem, clip_id)
+            if clip_obj:
+                active_is_completed = clip_obj.is_completed
+            active_spent_sec = session.execute(
+                select(func.sum(WorkSession.active_duration)).where(WorkSession.clip_id == clip_id)
+            ).scalar() or 0
+
         if cur_proj:
-            self.timer_card.set_context(cur_proj["couple_names"], cur_proj["studio_name"], clip_name)
+            self.timer_card.set_context(
+                cur_proj["couple_names"], 
+                cur_proj["studio_name"], 
+                clip_name, 
+                is_completed=active_is_completed, 
+                accumulated_seconds=active_spent_sec
+            )
             if hasattr(self, "nle_timeline_card"):
                 self.nle_timeline_card.update_project_timeline(
                     self.selected_project_id,
@@ -916,7 +968,7 @@ class TimeTrackingView(QWidget):
             self.window(),
             title="حذف جلسه کاری",
             message="آیا از حذف این جلسه کاری اطمینان دارید؟",
-            details="مدت زمان این جلسه از مجموع کارکرد امروز کسر خواهد شد.",
+            details="مدت زمان این جلسه از مجموع کارکرد پروژه و کلیپ کسر خواهد شد.",
             confirm_text="حذف جلسه",
             is_danger=True,
             icon_name="trash"
@@ -952,8 +1004,8 @@ class TimeTrackingView(QWidget):
                         sess.note = diag.session_note
                         session.commit()
 
-            self.engine.pause_session()
-            global_signals.show_toast.emit("جلسه کاری متوقف و در حافظه ذخیره شد.", "info")
+            self.engine.pause_session(auto=False)
+            global_signals.show_toast.emit("جلسه کاری متوقف شد.", "info")
             self.refresh_dashboard()
 
     def _handle_finish_clip_direct(self):
@@ -969,16 +1021,20 @@ class TimeTrackingView(QWidget):
             self.window(),
             title="تکمیل نهایی کلیپ",
             message=f"آیا کار روی کلیپ «{clip_name}» به پایان رسیده است؟",
-            details="وضعیت این کلیپ ۱۰۰٪ تکمیل شده ثبت می‌شود و جلسه کاری پایان می‌یابد.",
+            details="وضعیت این کلیپ ۱۰۰٪ تکمیل شده ثبت می‌شود و تایمر آن قفل خواهد شد.",
             confirm_text="✓ بله، کلیپ تکمیل شد",
             is_danger=False,
             icon_name="check"
         ):
             self.engine.end_session(note="تکمیل ۱۰۰٪ کلیپ", mark_clip_completed=True)
-            global_signals.show_toast.emit(f"کلیپ «{clip_name}» تکمیل و ثبت شد.", "success")
+            global_signals.show_toast.emit(f"کلیپ «{clip_name}» تکمیل و قفل شد.", "success")
             self.refresh_dashboard()
 
     def _open_manual_entry_dialog(self):
-        diag = ManualTimeEntryDialog(self.window())
+        diag = ManualTimeEntryDialog(
+            initial_project_id=self.selected_project_id,
+            initial_clip_id=self.engine.current_clip_id,
+            parent=self.window()
+        )
         if diag.exec():
             self.refresh_dashboard()

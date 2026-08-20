@@ -2,8 +2,11 @@
 # FILE: time_tracking/system_monitor.py
 # ==================================================
 import sys
+import os
 import time
 import ctypes
+import platform
+import subprocess
 import psutil
 from PySide6.QtCore import QThread, Signal
 
@@ -26,6 +29,80 @@ SUPPORTING_PROCESSES = {
     "cubase.exe": "Cubase",
     "fl64.exe": "FL Studio"
 }
+
+
+def get_hardware_specifications() -> dict:
+    """شناسایی خودکار و Cross-Platform مدل CPU، GPU و حجم کل RAM"""
+    specs = {
+        "cpu_name": "پردازنده سیستم",
+        "gpu_name": "کارت گرافیک",
+        "ram_total_str": "حافظه رم"
+    }
+
+    # ۱. محاسبه حجم کل رم
+    try:
+        total_ram_gb = round(psutil.virtual_memory().total / (1024 ** 3))
+        specs["ram_total_str"] = f"{total_ram_gb} GB RAM"
+    except Exception:
+        specs["ram_total_str"] = "RAM"
+
+    # ۲. شناسایی نام و مدل پردازنده (CPU)
+    try:
+        if sys.platform == "win32":
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+            cpu_raw = winreg.QueryValueEx(key, "ProcessorNameString")[0]
+            winreg.CloseKey(key)
+            specs["cpu_name"] = cpu_raw.strip().replace("Processor", "").replace("(R)", "").replace("(TM)", "").strip()
+        elif sys.platform == "darwin":
+            cmd = ["sysctl", "-n", "machdep.cpu.brand_string"]
+            cpu_raw = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
+            specs["cpu_name"] = cpu_raw
+        else:
+            specs["cpu_name"] = platform.processor() or "CPU"
+    except Exception:
+        specs["cpu_name"] = platform.processor() or "CPU"
+
+    # تمیزکاری نام CPU برای نمایش فشرده در تایل
+    if "Intel" in specs["cpu_name"]:
+        specs["cpu_name"] = specs["cpu_name"].replace("Intel Core", "Core").strip()
+    elif "AMD" in specs["cpu_name"]:
+        specs["cpu_name"] = specs["cpu_name"].replace("AMD Ryzen", "Ryzen").strip()
+
+    # ۳. شناسایی نام و مدل کارت گرافیک (GPU)
+    try:
+        if sys.platform == "win32":
+            # استفاده از دستور سبک و بدون پنجره wmic/powershell
+            cmd = "powershell -NoProfile -Command \"Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name\""
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            output = subprocess.check_output(
+                cmd, 
+                startupinfo=startupinfo, 
+                stderr=subprocess.DEVNULL, 
+                shell=False
+            ).decode("utf-8", errors="ignore").strip().splitlines()
+
+            # ترجیح کارت‌های مجزا (NVIDIA / AMD) نسبت به گرافیک آنبورد اینتل
+            gpus = [g.strip() for g in output if g.strip()]
+            if gpus:
+                discrete_gpus = [g for g in gpus if "NVIDIA" in g or "Radeon" in g or "RTX" in g or "GTX" in g or "AMD" in g]
+                target_gpu = discrete_gpus[0] if discrete_gpus else gpus[0]
+                # کوتاه‌سازی نام تجاری برای تناسب باکس
+                specs["gpu_name"] = target_gpu.replace("NVIDIA GeForce", "").replace("AMD Radeon", "Radeon").strip()
+        elif sys.platform == "darwin":
+            cmd = ["system_profiler", "SPDisplaysDataType"]
+            output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode()
+            for line in output.splitlines():
+                if "Chipset Model:" in line:
+                    specs["gpu_name"] = line.split(":", 1)[1].strip()
+                    break
+        else:
+            specs["gpu_name"] = "GPU"
+    except Exception:
+        specs["gpu_name"] = "GPU"
+
+    return specs
 
 
 class LASTINPUTINFO(ctypes.Structure):
@@ -82,6 +159,8 @@ class SystemActivityMonitorThread(QThread):
         super().__init__(parent)
         self.check_interval_sec = check_interval_sec
         self._is_running = True
+        # شناسایی یک‌باره نام قطعات سخت‌افزار در زمان استارت
+        self.hardware_specs = get_hardware_specifications()
 
     def run(self):
         try:
@@ -115,10 +194,8 @@ class SystemActivityMonitorThread(QThread):
                 ram_pct = psutil.virtual_memory().percent
                 gpu_pct = min(100.0, cpu_pct * 0.85) if cpu_pct > 65 else min(100.0, cpu_pct * 0.4)
 
-                # تشخیص هوشمند رندر
                 is_rendering = (cpu_pct >= 40.0 or gpu_pct >= 35.0)
 
-                # ماشین وضعیت کاری (Context-Aware State Machine)
                 if is_rendering:
                     current_state = "processing"
                 elif is_core_nle:
@@ -138,7 +215,8 @@ class SystemActivityMonitorThread(QThread):
                     "ram_percent": float(ram_pct),
                     "is_rendering": is_rendering,
                     "is_core_nle": is_core_nle,
-                    "is_supporting": is_supporting
+                    "is_supporting": is_supporting,
+                    "hardware_specs": self.hardware_specs
                 }
 
                 self.metrics_updated.emit(payload)

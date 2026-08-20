@@ -14,25 +14,12 @@ from core.project_controller import ProjectController
 class FinanceController:
     @staticmethod
     def is_project_eligible_for_finance(project: Project) -> bool:
-        """
-        قانون ورود پروژه به بخش مالی:
-        پروژه باید ۱۰۰٪ تکمیل شده و دکمه تحویل به آتلیه زده شده باشد
-        (یعنی دارای تاریخ تحویل delivered_at باشد یا به آرشیو/بازبینی منتقل شده باشد).
-        پروژه‌های در حال تدوین یا تازه ثبت‌شده به هیچ وجه نمایش داده نمی‌شوند.
-        """
-        # اگر پروژه آرشیو شده باشد
         if project.is_archived:
             return True
-
-        # شرط اصلی: ثبت رسمی تحویل به آتلیه
         if project.delivered_at is not None:
             return True
-
-        # مرحله رسمی تحویل داده شده
         if project.current_stage == StageEnum.DELIVERED:
             return True
-
-        # وضعیت‌های پس از تحویل اولیه (بازبینی، اصلاحیه و...)
         if project.workflow_status in [
             WorkflowStatusEnum.UNDER_REVIEW, 
             WorkflowStatusEnum.REVISION_IN_PROGRESS, 
@@ -40,7 +27,6 @@ class FinanceController:
             WorkflowStatusEnum.ARCHIVED
         ]:
             return True
-
         return False
 
     @staticmethod
@@ -94,7 +80,6 @@ class FinanceController:
 
     @staticmethod
     def get_studio_debt_summary(client_id: int) -> Dict[str, Any]:
-        """محاسبه طلب استودیو منحصراً بر اساس پروژه‌های تحویل‌شده (FIFO)"""
         with db.get_session() as session:
             stmt = (
                 select(Project)
@@ -108,7 +93,6 @@ class FinanceController:
             )
             all_projects = session.scalars(stmt).unique().all()
 
-        # فیلتر سخت‌گیرانه: فقط پروژه‌های تحویل‌شده
         eligible_projects = [p for p in all_projects if FinanceController.is_project_eligible_for_finance(p)]
 
         total_fee = 0
@@ -152,9 +136,9 @@ class FinanceController:
         total_amount: int,
         payment_type: PaymentTypeEnum = PaymentTypeEnum.STAGE_PAYMENT,
         notes: str = "",
+        tracking_code: str = "",
         paid_at: Optional[datetime] = None
     ) -> List[int]:
-        """تخصیص خودکار واریزی فقط به پروژه‌های تحویل‌شده و واجد شرایط مالی"""
         if total_amount <= 0:
             return []
 
@@ -193,6 +177,7 @@ class FinanceController:
                         amount=allocated_for_this,
                         payment_type=payment_type,
                         notes=combined_note,
+                        tracking_code=tracking_code.strip() or None,
                         paid_at=paid_at
                     )
                     session.add(trx)
@@ -215,6 +200,7 @@ class FinanceController:
                     amount=remaining_to_allocate,
                     payment_type=payment_type,
                     notes=f"{notes.strip()} [مانده بستانکار استودیو]".strip(),
+                    tracking_code=tracking_code.strip() or None,
                     paid_at=paid_at
                 )
                 session.add(trx)
@@ -226,6 +212,30 @@ class FinanceController:
         return created_transaction_ids
 
     @staticmethod
+    def delete_transaction(transaction_id: int) -> bool:
+        """حذف ایمن تراکنش مالی و بازگردانی مانده حساب"""
+        with db.get_session() as session:
+            trx = session.get(Transaction, transaction_id)
+            if not trx:
+                return False
+            
+            project_id = trx.project_id
+            client_id = trx.client_id
+            amount_val = trx.amount
+
+            if project_id:
+                ProjectController.log_event(
+                    session, project_id, "TRANSACTION_DELETED",
+                    f"حذف تراکنش دریافت مبلغ {amount_val:,} تومان",
+                    f"تراکنش با کد پیگیری {trx.tracking_code or '-'} حذف شد."
+                )
+
+            session.delete(trx)
+            session.commit()
+
+        return True
+
+    @staticmethod
     def get_financial_dashboard_data(
         client_id: Optional[int] = None,
         date_range_key: str = "all",
@@ -233,7 +243,6 @@ class FinanceController:
         custom_start: Optional[datetime] = None,
         custom_end: Optional[datetime] = None
     ) -> Dict[str, Any]:
-        """گزارش مالی جامع صرفاً برای پروژه‌های تحویل‌شده به استودیو"""
         start_dt, end_dt = FinanceController.get_date_range_bounds(date_range_key, custom_start, custom_end)
 
         with db.get_session() as session:
@@ -254,7 +263,6 @@ class FinanceController:
 
         filtered_projects = []
         for p in all_projects:
-            # اعمال دقیق شرط تحویل پروژه
             if not FinanceController.is_project_eligible_for_finance(p):
                 continue
 
@@ -296,6 +304,7 @@ class FinanceController:
                     "project_title": p.couple_names or p.title,
                     "client_name": p.client.company if (p.client and p.client.company) else (p.client.full_name if p.client else "بدون استودیو"),
                     "amount": int(t.amount or 0),
+                    "tracking_code": t.tracking_code or "",
                     "payment_type": t.payment_type.value if hasattr(t.payment_type, "value") else str(t.payment_type),
                     "notes": t.notes or "-",
                     "paid_at": t.paid_at,
@@ -352,9 +361,10 @@ class FinanceController:
         monthly_income = [{"month": name, "month_idx": i+1, "amount": 0, "count": 0} for i, name in enumerate(month_names)]
         
         for t in all_transactions:
-            if t["paid_at"]:
+            t_dt = t.get("paid_at")
+            if t_dt:
                 try:
-                    j_dt = jdatetime.datetime.fromgregorian(datetime=t["paid_at"])
+                    j_dt = jdatetime.datetime.fromgregorian(datetime=t_dt)
                     if j_dt.year == current_j_year:
                         m_idx = j_dt.month - 1
                         if 0 <= m_idx < 12:
@@ -379,7 +389,6 @@ class FinanceController:
 
     @staticmethod
     def get_dashboard_metrics() -> Dict[str, Any]:
-        """آمار هدر پیشخوان: تفکیک دقیق پروژه‌های قبل و بعد از تحویل"""
         data = FinanceController.get_financial_dashboard_data()
         with db.get_session() as session:
             stmt = (
@@ -392,7 +401,6 @@ class FinanceController:
             )
             active_projects = session.scalars(stmt).unique().all()
 
-            # پروژه‌های فعال در حال تدوین (قبل از تحویل)
             in_editing_projects = [
                 p for p in active_projects 
                 if not FinanceController.is_project_eligible_for_finance(p)

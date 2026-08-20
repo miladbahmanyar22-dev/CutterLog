@@ -7,6 +7,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from sqlalchemy import select, func
 
 from database.db_manager import db
+from database.models import ProjectClipItem
 from time_tracking.models import WorkSession, DailyGoal, ActivityLog, SessionStatusEnum
 from time_tracking.system_monitor import SystemActivityMonitorThread
 from core.signals import global_signals
@@ -14,7 +15,7 @@ from core.signals import global_signals
 
 class TimeTrackingEngine(QObject):
     _instance = None
-    retroactive_prompt_requested = Signal(int, str)  # (seconds_away, previous_app_name)
+    retroactive_prompt_requested = Signal(int, str)
 
     @classmethod
     def instance(cls):
@@ -49,7 +50,7 @@ class TimeTrackingEngine(QObject):
         self.auto_save_timer.setInterval(30000)
         self.auto_save_timer.timeout.connect(self._persist_active_session)
 
-        # ترد پایش سیستم
+        # ترد پایش فعالیت سیستم
         self.monitor_thread = SystemActivityMonitorThread(check_interval_sec=1.0, parent=self)
         self.monitor_thread.metrics_updated.connect(self._on_system_metrics)
         self.monitor_thread.start()
@@ -93,34 +94,31 @@ class TimeTrackingEngine(QObject):
         if not self.is_running or self.is_paused:
             return
 
-        # منطق خلبان خودکار زمینه کاری (Context-Aware Engine)
+        # پایش هوشمند خروج از محیط تدوین
         if state in ["distraction", "away"] and not is_rendering:
             self.away_accumulated_seconds += 1
-            # اگر خروج از محیط تدوین بیش از ۶۰ ثانیه طول کشید، تایمر تعلیق می‌شود
             if self.away_accumulated_seconds >= 60 and not self.auto_suspended:
                 self.auto_suspended = True
-                self.pause_session()
-                global_signals.show_toast.emit("خروج از محیط تدوین؛ جلسه کاری به صورت هوشمند متوقف شد.", "info")
+                self.pause_session(auto=True)
+                global_signals.show_toast.emit("خروج از محیط تدوین؛ جلسه کاری به صورت خودکار متوقف شد.", "info")
         else:
-            # کاربر به محیط نرم‌افزار تدوین بازگشته است
             if self.auto_suspended and (is_core_nle or is_supporting or is_rendering):
                 away_sec = self.away_accumulated_seconds
                 self.auto_suspended = False
                 self.away_accumulated_seconds = 0
                 self.resume_session()
 
-                # اگر زمان خروج بیش از ۹۰ ثانیه بود، نمایش پنجره جبران زمان
                 if away_sec >= 90:
                     self.retroactive_prompt_requested.emit(away_sec, data.get("active_app", "سایر برنامه‌ها"))
             else:
                 self.away_accumulated_seconds = 0
 
     def apply_retroactive_time(self, seconds_to_add: int):
-        """افزودن زمان تایید شده کاربر به سشن جاری"""
         if self.is_running:
             self.active_seconds += seconds_to_add
             self._persist_active_session()
             global_signals.show_toast.emit(f"مدت زمان {seconds_to_add // 60} دقیقه به پروژه افزوده شد.", "success")
+            self._emit_snapshot()
 
     def _on_tick(self):
         if not self.is_running:
@@ -131,12 +129,12 @@ class TimeTrackingEngine(QObject):
         else:
             if self.last_system_metric.get("is_rendering"):
                 self.render_seconds += 1
-                self.active_seconds += 1
-            else:
-                self.active_seconds += 1
+            self.active_seconds += 1
 
+        self._emit_snapshot()
+
+    def _emit_snapshot(self):
         total_sec = self.active_seconds + self.paused_seconds
-        
         snapshot = {
             "session_id": self.active_session_id,
             "project_id": self.current_project_id,
@@ -177,6 +175,7 @@ class TimeTrackingEngine(QObject):
             self.idle_seconds = state["idle_seconds"]
             self.is_paused = state["is_paused"]
             self.is_running = state["is_running"]
+            self.auto_suspended = False
 
             if self.is_running and not self.is_paused:
                 self.tick_timer.start()
@@ -187,8 +186,18 @@ class TimeTrackingEngine(QObject):
             self.idle_seconds = 0
             self.is_paused = False
             self.is_running = False
+            self.auto_suspended = False
+
+        self._emit_snapshot()
 
     def start_session(self, project_id: int, clip_id: Optional[int] = None, stage_name: str = "Editing") -> int:
+        if clip_id:
+            with db.get_session() as session:
+                clip = session.get(ProjectClipItem, clip_id)
+                if clip and clip.is_completed:
+                    global_signals.show_toast.emit("این کلیپ تکمیل شده است و امکان ثبت زمان ندارد.", "warning")
+                    return 0
+
         self.current_project_id = project_id
         self.current_clip_id = clip_id
         self.active_seconds = 0
@@ -228,9 +237,10 @@ class TimeTrackingEngine(QObject):
         }
 
         global_signals.session_started.emit(self.active_session_id)
+        self._emit_snapshot()
         return self.active_session_id
 
-    def pause_session(self):
+    def pause_session(self, auto: bool = False):
         if self.is_running and not self.is_paused:
             self.is_paused = True
             self.tick_timer.stop()
@@ -243,11 +253,13 @@ class TimeTrackingEngine(QObject):
 
             if self.active_session_id:
                 global_signals.session_paused.emit(self.active_session_id)
+            self._emit_snapshot()
 
     def resume_session(self):
         if self.is_running and self.is_paused:
             self.is_paused = False
             self.auto_suspended = False
+            self.away_accumulated_seconds = 0
             self.tick_timer.start()
             self._persist_active_session()
 
@@ -257,6 +269,7 @@ class TimeTrackingEngine(QObject):
 
             if self.active_session_id:
                 global_signals.session_resumed.emit(self.active_session_id)
+            self._emit_snapshot()
 
     def end_session(self, note: str = "", mark_clip_completed: bool = False) -> bool:
         if not self.is_running or not self.active_session_id:
@@ -282,11 +295,11 @@ class TimeTrackingEngine(QObject):
                 sess.is_clip_completed = mark_clip_completed
 
                 if mark_clip_completed and sess.clip_id:
-                    from database.models import ProjectClipItem
                     clip = session.get(ProjectClipItem, sess.clip_id)
                     if clip:
                         clip.is_completed = True
                         clip.completed_at = datetime.utcnow()
+                        session.flush()
                         global_signals.clip_status_toggled.emit(clip.project_id, clip.id)
 
                 session.commit()
@@ -297,6 +310,7 @@ class TimeTrackingEngine(QObject):
 
         self.is_running = False
         self.is_paused = False
+        self.auto_suspended = False
         self.active_session_id = None
         self.active_seconds = 0
         self.render_seconds = 0
@@ -305,6 +319,7 @@ class TimeTrackingEngine(QObject):
 
         global_signals.session_ended.emit(sess_id)
         global_signals.project_updated.emit(self.current_project_id or 0)
+        self._emit_snapshot()
         return True
 
     def _persist_active_session(self):

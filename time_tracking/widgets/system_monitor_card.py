@@ -1,10 +1,113 @@
 # ==================================================
 # FILE: time_tracking/widgets/system_monitor_card.py
 # ==================================================
-from PySide6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar
-from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QFrame, QVBoxLayout, QHBoxLayout, QLabel, 
+    QProgressBar, QSizePolicy
+)
+from PySide6.QtCore import Qt, QVariantAnimation, QEasingCurve
 from core.signals import global_signals
 from core.persian_utils import to_persian_numbers
+
+
+class HardwareMeterTile(QFrame):
+    """تایل مانیتورینگ منبع سخت‌افزاری همراه با نمایش دقیق مدل قطعه در زیر نوار پیشرفت"""
+    def __init__(self, title: str, accent_color: str, default_model: str = "...", parent=None):
+        super().__init__(parent)
+        self.title = title
+        self.accent_color = accent_color
+        self.current_pct = 0
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Preferred)
+        self.setFixedHeight(74)
+
+        self.setStyleSheet(f"""
+            QFrame {{
+                background-color: #161F30;
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                border-radius: 8px;
+            }}
+            QFrame:hover {{
+                border-color: {self.accent_color}55;
+                background-color: #1A2438;
+            }}
+            QLabel {{
+                background: transparent;
+                border: none;
+                font-family: 'Vazirmatn';
+            }}
+        """)
+        self.init_ui(default_model)
+
+    def init_ui(self, default_model: str):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(3)
+        layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        # ردیف عنوان و درصد
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        
+        lbl_t = QLabel(self.title)
+        lbl_t.setStyleSheet("font-size: 10.5px; font-weight: 600; color: #94A3B8;")
+        top_row.addWidget(lbl_t)
+        top_row.addStretch()
+
+        self.lbl_val = QLabel("۰٪")
+        self.lbl_val.setStyleSheet(f"font-family: 'Segoe UI', 'Vazirmatn'; font-size: 12.5px; font-weight: 800; color: {self.accent_color};")
+        top_row.addWidget(self.lbl_val)
+
+        layout.addLayout(top_row)
+
+        # نوار باریک پیشرفت
+        self.pb = QProgressBar()
+        self.pb.setRange(0, 100)
+        self.pb.setValue(0)
+        self.pb.setFixedHeight(4)
+        self.pb.setTextVisible(False)
+        self.pb.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: #0E131F;
+                border: none;
+                border-radius: 2px;
+            }}
+            QProgressBar::chunk {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {self.accent_color}88, stop:1 {self.accent_color});
+                border-radius: 2px;
+            }}
+        """)
+        layout.addWidget(self.pb)
+
+        # نمایش مدل دقیق سخت‌افزار در زیر خط پیشرفت
+        self.lbl_model = QLabel(default_model)
+        self.lbl_model.setStyleSheet("font-family: -apple-system, 'Segoe UI', 'Vazirmatn'; font-size: 9.5px; font-weight: 600; color: #64748B;")
+        self.lbl_model.setWordWrap(False)
+        layout.addWidget(self.lbl_model)
+
+    def set_model_name(self, name: str):
+        if name and self.lbl_model.text() != name:
+            self.lbl_model.setText(name)
+            self.lbl_model.setToolTip(name)
+
+    def set_value_smooth(self, target_val: int):
+        target_val = max(0, min(100, target_val))
+        if abs(target_val - self.current_pct) < 2 and target_val != 0:
+            return
+
+        self.anim = QVariantAnimation(self)
+        self.anim.setDuration(400)
+        self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.anim.setStartValue(self.current_pct)
+        self.anim.setEndValue(target_val)
+        self.anim.valueChanged.connect(self._on_anim_step)
+        self.anim.start()
+        self.current_pct = target_val
+
+    def _on_anim_step(self, val):
+        v = int(val)
+        self.pb.setValue(v)
+        self.lbl_val.setText(f"{to_persian_numbers(v)}٪")
 
 
 class SystemMonitorCard(QFrame):
@@ -26,78 +129,55 @@ class SystemMonitorCard(QFrame):
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(6)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(8)
 
-        # سربرگ وضعیت و نام برنامه
+        # ۱. هدر وضعیت و نام برنامه فعال
         top_row = QHBoxLayout()
+        top_row.setSpacing(8)
+        top_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
         self.lbl_app_name = QLabel("🎬 Premiere Pro")
-        self.lbl_app_name.setStyleSheet("font-size: 13px; font-weight: 800; color: #F8FAFC;")
+        self.lbl_app_name.setStyleSheet("font-size: 13.5px; font-weight: 800; color: #F8FAFC;")
         top_row.addWidget(self.lbl_app_name, stretch=1)
 
         self.lbl_status_pill = QLabel("● تدوین فعال")
         self.lbl_status_pill.setStyleSheet("""
             font-size: 11px;
-            font-weight: 800;
+            font-weight: 700;
             color: #10B981;
-            background: rgba(16, 185, 129, 0.15);
+            background: rgba(16, 185, 129, 0.12);
             border: 1px solid rgba(16, 185, 129, 0.3);
-            border-radius: 10px;
-            padding: 2px 8px;
+            border-radius: 6px;
+            padding: 3px 10px;
         """)
         top_row.addWidget(self.lbl_status_pill)
         layout.addLayout(top_row)
 
-        # خط جداکننده محو
         div = QFrame()
         div.setFixedHeight(1)
-        div.setStyleSheet("background-color: rgba(255, 255, 255, 0.04);")
+        div.setStyleSheet("background-color: rgba(255, 255, 255, 0.05);")
         layout.addWidget(div)
 
-        # متریک‌های سخت‌افزار
-        self.cpu_bar = self._create_bar_row("پردازنده (CPU):", "#6366F1")
-        self.gpu_bar = self._create_bar_row("کارت گرافیک (GPU):", "#38BDF8")
-        self.ram_bar = self._create_bar_row("حافظه رم (RAM):", "#F59E0B")
+        # ۲. تایل‌های ۳ گانه با مدل سخت‌افزار
+        grid_row = QHBoxLayout()
+        grid_row.setSpacing(8)
 
-        layout.addLayout(self.cpu_bar["layout"])
-        layout.addLayout(self.gpu_bar["layout"])
-        layout.addLayout(self.ram_bar["layout"])
+        self.tile_cpu = HardwareMeterTile("پردازنده (CPU)", "#818CF8", "در حال شناسایی...", self)
+        self.tile_gpu = HardwareMeterTile("گرافیک (GPU)", "#38BDF8", "در حال شناسایی...", self)
+        self.tile_ram = HardwareMeterTile("حافظه (RAM)", "#F59E0B", "در حال شناسایی...", self)
 
-        # وضعیت خودکار خلبان هوشمند
-        self.lbl_auto_pilot = QLabel("⚡ پایشگر هوشمند: فعال (تشخیص خودکار رندر و توقف عدم تعامل)")
-        self.lbl_auto_pilot.setStyleSheet("font-size: 10px; color: #64748B; padding-top: 2px;")
+        grid_row.addWidget(self.tile_cpu)
+        grid_row.addWidget(self.tile_gpu)
+        grid_row.addWidget(self.tile_ram)
+        layout.addLayout(grid_row)
+
+        layout.addStretch()
+
+        # ۳. فوتر هوشمند
+        self.lbl_auto_pilot = QLabel("⚡ پایشگر هوشمند پایپ‌لاین: آماده تشخیص رندر و مدیریت زمان")
+        self.lbl_auto_pilot.setStyleSheet("font-size: 10px; color: #64748B; padding-right: 2px;")
         layout.addWidget(self.lbl_auto_pilot)
-
-    def _create_bar_row(self, title: str, accent_color: str) -> dict:
-        row = QHBoxLayout()
-        row.setSpacing(6)
-
-        lbl_t = QLabel(title)
-        lbl_t.setStyleSheet("font-size: 11px; color: #94A3B8; min-width: 95px;")
-        row.addWidget(lbl_t)
-
-        pb = QProgressBar()
-        pb.setRange(0, 100)
-        pb.setFixedHeight(4)
-        pb.setTextVisible(False)
-        pb.setStyleSheet(f"""
-            QProgressBar {{
-                background-color: #161F30;
-                border-radius: 2px;
-                border: none;
-            }}
-            QProgressBar::chunk {{
-                background-color: {accent_color};
-                border-radius: 2px;
-            }}
-        """)
-        row.addWidget(pb, stretch=1)
-
-        lbl_val = QLabel("۰٪")
-        lbl_val.setStyleSheet("font-family: 'Segoe UI'; font-size: 11px; font-weight: 700; color: #F8FAFC; min-width: 32px; text-align: left;")
-        row.addWidget(lbl_val)
-
-        return {"layout": row, "bar": pb, "val": lbl_val}
 
     def update_metrics(self, data: dict):
         app = data.get("active_app", "برنامه عمومی")
@@ -106,28 +186,32 @@ class SystemMonitorCard(QFrame):
         state = data.get("state", "idle")
         is_rendering = data.get("is_rendering", False)
 
+        # تنظیم مشخصات سخت‌افزار ارسالی از ترد مانیتورینگ
+        hw_specs = data.get("hardware_specs", {})
+        if hw_specs:
+            self.tile_cpu.set_model_name(hw_specs.get("cpu_name", "CPU"))
+            self.tile_gpu.set_model_name(hw_specs.get("gpu_name", "GPU"))
+            self.tile_ram.set_model_name(hw_specs.get("ram_total_str", "RAM"))
+
+        # وضعیت برچسب
         if state == "editing":
             self.lbl_status_pill.setText("● تدوین فعال")
-            self.lbl_status_pill.setStyleSheet("color: #10B981; background: rgba(16,185,129,0.15); border: 1px solid rgba(16,185,129,0.3); border-radius: 10px; padding: 2px 8px; font-weight: 800;")
+            self.lbl_status_pill.setStyleSheet("color: #10B981; background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.3); border-radius: 6px; padding: 3px 10px; font-weight: 700;")
         elif state == "processing" or is_rendering:
-            self.lbl_status_pill.setText("⚡ رندر / پردازش فعال")
-            self.lbl_status_pill.setStyleSheet("color: #38BDF8; background: rgba(56,189,248,0.15); border: 1px solid rgba(56,189,248,0.3); border-radius: 10px; padding: 2px 8px; font-weight: 800;")
-        elif state == "outside_editing":
+            self.lbl_status_pill.setText("⚡ رندر / پردازش")
+            self.lbl_status_pill.setStyleSheet("color: #38BDF8; background: rgba(56,189,248,0.12); border: 1px solid rgba(56,189,248,0.3); border-radius: 6px; padding: 3px 10px; font-weight: 700;")
+        elif state in ["outside_editing", "distraction"]:
             self.lbl_status_pill.setText("○ سایر برنامه‌ها")
-            self.lbl_status_pill.setStyleSheet("color: #F59E0B; background: rgba(245,158,11,0.15); border: 1px solid rgba(245,158,11,0.3); border-radius: 10px; padding: 2px 8px; font-weight: 700;")
+            self.lbl_status_pill.setStyleSheet("color: #F59E0B; background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.3); border-radius: 6px; padding: 3px 10px; font-weight: 600;")
         else:
-            idle_s = data.get("idle_seconds", 0)
-            self.lbl_status_pill.setText(f"⏳ بدون تعامل ({to_persian_numbers(idle_s)}s)")
-            self.lbl_status_pill.setStyleSheet("color: #94A3B8; background: #161F30; border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 2px 8px;")
+            self.lbl_status_pill.setText("⏳ آماده‌به‌کار")
+            self.lbl_status_pill.setStyleSheet("color: #94A3B8; background: #161F30; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 3px 10px;")
 
+        # مقداردهی درصدهای زنده با انیمیشن ملایم
         cpu = int(data.get("cpu_percent", 0))
-        self.cpu_bar["bar"].setValue(cpu)
-        self.cpu_bar["val"].setText(f"{to_persian_numbers(cpu)}٪")
-
         gpu = int(data.get("gpu_percent", 0))
-        self.gpu_bar["bar"].setValue(gpu)
-        self.gpu_bar["val"].setText(f"{to_persian_numbers(gpu)}٪")
-
         ram = int(data.get("ram_percent", 0))
-        self.ram_bar["bar"].setValue(ram)
-        self.ram_bar["val"].setText(f"{to_persian_numbers(ram)}٪")
+
+        self.tile_cpu.set_value_smooth(cpu)
+        self.tile_gpu.set_value_smooth(gpu)
+        self.tile_ram.set_value_smooth(ram)

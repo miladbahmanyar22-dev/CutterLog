@@ -198,6 +198,7 @@ class Transaction(Base):
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="SET NULL"), nullable=True)
     revision_id = Column(Integer, ForeignKey("project_revisions.id", ondelete="SET NULL"), nullable=True)
     amount = Column(BigInteger, nullable=False, default=0)
+    tracking_code = Column(String(100), nullable=True)
     
     payment_type = Column(SafeEnum(PaymentTypeEnum), default=PaymentTypeEnum.STAGE_PAYMENT)
     
