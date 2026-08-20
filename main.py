@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QIcon
 
 from config import get_asset_path
 from core.font_manager import FontManager
@@ -22,6 +22,13 @@ def bootstrap_app():
     app = QApplication(sys.argv)
     app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
     
+    # ----------------------------------------------------
+    # تنظیم آیکون سراسری برنامه برای نوار عنوان و تسک‌بار
+    # ----------------------------------------------------
+    icon_path = get_asset_path("assets/icons/icon.ico")
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path.resolve())))
+
     # راه‌اندازی زیرساخت‌های پایه (دیتابیس، پوشه‌ها، تنظیمات)
     initialize_application()
 
