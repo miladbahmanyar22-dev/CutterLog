@@ -1,0 +1,341 @@
+/* styles/dark_theme.qss */
+
+/* ۱. استایل پایه و فونت */
+* {
+    font-family: "Vazirmatn", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", sans-serif;
+    color: #F8FAFC;
+}
+
+QWidget {
+    font-family: "Vazirmatn", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+QMainWindow, QDialog {
+    background-color: #0B0F17;
+}
+
+/* ۲. متن‌ها */
+QLabel {
+    background-color: transparent;
+    border: none;
+    outline: none;
+}
+
+QLabel[heading="hero"] {
+    font-size: 22px;
+    font-weight: 800;
+    color: #F8FAFC;
+}
+
+QLabel[heading="card"] {
+    font-size: 16px;
+    font-weight: 900;
+    color: #F8FAFC;
+}
+
+QLabel[heading="sub"] {
+    font-size: 13px;
+    font-weight: 300;
+    color: #94A3B8;
+}
+
+/* ۳. سطوح ساختاری و کارت‌ها */
+QFrame#SurfaceCard, QFrame[class="SurfaceCard"] {
+    background-color: #1A2234;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+}
+
+QFrame#TopHeaderFrame {
+    background-color: #0B0F17;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* ۴. فیلدهای ورودی */
+QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox {
+    font-family: "Vazirmatn", -apple-system, sans-serif;
+    font-size: 13px;
+    background-color: #242E42;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 8px 12px;
+    color: #F8FAFC;
+    selection-background-color: #6366F1;
+}
+
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QSpinBox:focus {
+    border: 1px solid #6366F1;
+    background-color: #242E42;
+}
+
+QLineEdit::placeholder, QTextEdit::placeholder {
+    color: #64748B;
+    font-weight: 300;
+}
+
+/* ۵. دکمه‌ها */
+QPushButton {
+    font-family: "Vazirmatn", -apple-system, sans-serif;
+    outline: none;
+    border: none;
+}
+
+QPushButton.PrimaryButton, QPushButton[class="PrimaryButton"] {
+    font-family: "Vazirmatn", -apple-system, sans-serif;
+    font-weight: 700;
+    font-size: 13px;
+    background-color: #6366F1;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 16px;
+}
+
+QPushButton.PrimaryButton:hover, QPushButton[class="PrimaryButton"]:hover {
+    background-color: #7C80F8;
+}
+
+QPushButton.PrimaryButton:pressed, QPushButton[class="PrimaryButton"]:pressed {
+    background-color: #4F46E5;
+}
+
+/* ۶. چک‌باکس‌ها و رادیوباتن‌ها */
+QCheckBox, QRadioButton {
+    font-family: "Vazirmatn", -apple-system, sans-serif;
+    background-color: transparent;
+    border: none;
+    color: #F8FAFC;
+    spacing: 8px;
+    font-size: 12px;
+}
+
+QCheckBox::indicator {
+    width: 18px;
+    height: 18px;
+    background-color: #1A2234;
+    border: 1.5px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+}
+
+QCheckBox::indicator:hover {
+    border-color: #6366F1;
+    background-color: #242E42;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #6366F1;
+    border-color: #6366F1;
+    image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'%3E%3C/polyline%3E%3C/svg%3E");
+}
+
+/* ۷. کومبوباکس‌ها و لیست‌های بازشو */
+QComboBox {
+    font-family: "Vazirmatn", -apple-system, sans-serif;
+    font-size: 12.5px;
+    background-color: #242E42;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 6px 12px;
+    color: #F8FAFC;
+}
+
+QComboBox:focus {
+    border: 1px solid #6366F1;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 24px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #1A2234;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 4px;
+    color: #F8FAFC;
+    selection-background-color: #6366F1;
+    selection-color: #FFFFFF;
+}
+
+/* ۸. جداول و لیست‌ها */
+QTableWidget, QListWidget {
+    font-family: "Vazirmatn", -apple-system, sans-serif;
+    background-color: #1A2234;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    gridline-color: rgba(255, 255, 255, 0.04);
+}
+
+QTableWidget::item, QListWidget::item {
+    border: none;
+}
+
+QTableWidget::item:selected, QListWidget::item:selected {
+    background-color: #242E42;
+    color: #6366F1;
+}
+
+QHeaderView::section {
+    font-family: "Vazirmatn", -apple-system, sans-serif;
+    font-weight: 600;
+    font-size: 12px;
+    background-color: #111827;
+    color: #94A3B8;
+    padding: 8px;
+    border: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* ۹. پروگرس‌بارها */
+QProgressBar {
+    background-color: #242E42;
+    border: none;
+    border-radius: 3px;
+    text-align: center;
+}
+
+QProgressBar::chunk {
+    background-color: #6366F1;
+    border-radius: 3px;
+}
+
+/* =======================================================
+   ۱۰. سیستم سراسری اسکرول‌بار مدرن و اختصاصی (Custom Studio Scrollbar)
+   ======================================================= */
+
+/* اسکرول‌بار عمودی */
+QScrollBar:vertical {
+    background: transparent;
+    width: 6px;
+    margin: 2px 0px 2px 0px;
+    border: none;
+    border-radius: 3px;
+}
+
+QScrollBar:vertical:hover {
+    width: 8px;
+}
+
+QScrollBar::handle:vertical {
+    background: #242E42;
+    min-height: 32px;
+    border-radius: 3px;
+    margin: 0px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #3A4866;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:vertical:pressed {
+    background: #6366F1;
+    border-radius: 4px;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+    width: 0px;
+    background: transparent;
+    border: none;
+}
+
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: transparent;
+    border: none;
+}
+
+/* اسکرول‌بار افقی */
+QScrollBar:horizontal {
+    background: transparent;
+    height: 6px;
+    margin: 0px 2px 0px 2px;
+    border: none;
+    border-radius: 3px;
+}
+
+QScrollBar:horizontal:hover {
+    height: 8px;
+}
+
+QScrollBar::handle:horizontal {
+    background: #242E42;
+    min-width: 32px;
+    border-radius: 3px;
+    margin: 0px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background: #3A4866;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:horizontal:pressed {
+    background: #6366F1;
+    border-radius: 4px;
+}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0px;
+    height: 0px;
+    background: transparent;
+    border: none;
+}
+
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+    background: transparent;
+    border: none;
+}
+
+/* اسکرول اریاهای عمومی */
+QScrollArea {
+    background: transparent;
+    border: none;
+}
+
+QScrollArea > QWidget > QWidget {
+    background: transparent;
+}
+
+/* ۱۱. تولتیپ‌ها */
+QToolTip {
+    font-family: "Vazirmatn", -apple-system, sans-serif;
+    background-color: #1E283D;
+    color: #F8FAFC;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 11.5px;
+}
+
+/* ۱۲. منوهای کلیک‌راست */
+QMenu {
+    background-color: #141B2A;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 8px;
+    padding: 6px;
+    color: #F8FAFC;
+    font-family: "Vazirmatn", -apple-system, sans-serif;
+    font-size: 12px;
+}
+
+QMenu::item {
+    background-color: transparent;
+    padding: 7px 16px;
+    border-radius: 5px;
+    color: #94A3B8;
+    font-weight: 500;
+}
+
+QMenu::item:selected {
+    background-color: #1A2438;
+    color: #818CF8;
+    font-weight: 700;
+}
+
+QMenu::separator {
+    height: 1px;
+    background-color: rgba(255, 255, 255, 0.06);
+    margin: 4px 6px;
+}

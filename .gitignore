@@ -1,0 +1,42 @@
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+venv/
+.venv/
+env/
+ENV/
+
+# Databases & Local Data
+*.db
+*.sqlite
+*.sqlite3
+music_vault_refs.json
+settings.json
+
+# CutterLog Runtime Data
+CutterLog/
+CutterLog_Music_Vault/
+
+# PyInstaller / Build Artifacts
+build/
+dist/
+*.spec
+
+# IDE & Editor Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Test & Coverage Artifacts
+.pytest_cache/
+.coverage
+htmlcov/
