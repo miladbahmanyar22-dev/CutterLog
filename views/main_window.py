@@ -8,9 +8,9 @@ from PySide6.QtWidgets import (
     QStackedWidget, QFrame, QLabel
 )
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QGuiApplication, QCloseEvent
+from PySide6.QtGui import QGuiApplication, QCloseEvent, QIcon
 
-from config import APP_NAME
+from config import APP_NAME, get_asset_path
 from core.signals import global_signals
 from widgets.capsule_navbar import CapsuleNavBar
 
@@ -124,6 +124,13 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         
+        # ----------------------------------------------------
+        # تنظیم آیکون مستقیماً روی پنجره اصلی (Title Bar & Window)
+        # ----------------------------------------------------
+        icon_path = get_asset_path("assets/icons/icon.ico")
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path.resolve())))
+
         self.update_window_title(is_active=False, is_paused=False)
 
         screen = QGuiApplication.primaryScreen()
