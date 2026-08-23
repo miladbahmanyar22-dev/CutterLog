@@ -73,7 +73,7 @@ class RollingDigitSlot(QWidget):
         h = float(self.height())
 
         slot_rect = QRectF(0, 0, w, h)
-        painter.setPen(QColor(255, 255, 255, 15))
+        painter.setPen(QColor(255, 255, 255, 12))
         painter.setBrush(QColor("#0B101D"))
         painter.drawRoundedRect(slot_rect, 6, 6)
 
@@ -93,10 +93,11 @@ class RollingDigitSlot(QWidget):
 
 
 class TimerControlCard(QFrame):
-    def __init__(self, on_pause_cb, on_finish_clip_cb, parent=None):
+    def __init__(self, on_pause_cb, on_finish_clip_cb, on_reopen_clip_cb=None, parent=None):
         super().__init__(parent)
         self.on_pause_cb = on_pause_cb
         self.on_finish_clip_cb = on_finish_clip_cb
+        self.on_reopen_clip_cb = on_reopen_clip_cb
         self.engine = TimeTrackingEngine.instance()
 
         self.project_title = "پروژه‌ای انتخاب نشده"
@@ -152,7 +153,7 @@ class TimerControlCard(QFrame):
         top_row.setSpacing(10)
         top_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        self.lbl_status_badge = QLabel("آماده شروع کار")
+        self.lbl_status_badge = QLabel("آماده شروع فرآیند تدوین")
         self.lbl_status_badge.setFixedHeight(26)
         self.lbl_status_badge.setStyleSheet("""
             font-family: 'Vazirmatn';
@@ -166,25 +167,25 @@ class TimerControlCard(QFrame):
         """)
         top_row.addWidget(self.lbl_status_badge)
 
-        self.lbl_context = QLabel("پروژه و کلیپ مورد نظر را انتخاب کنید")
+        self.lbl_context = QLabel("پروژه و قطعه مورد نظر را انتخاب نمایید")
         self.lbl_context.setStyleSheet("font-family: 'Vazirmatn'; font-size: 12px; color: #94A3B8; border: none; background: transparent;")
         top_row.addWidget(self.lbl_context, stretch=1)
 
         layout.addLayout(top_row)
 
         # ۲. پنل دیجیتال
-        timer_screen = QFrame()
-        timer_screen.setObjectName("TimerScreenFrame")
-        timer_screen.setFixedHeight(68)
-        timer_screen.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
-        timer_screen.setStyleSheet("""
+        self.timer_screen = QFrame()
+        self.timer_screen.setObjectName("TimerScreenFrame")
+        self.timer_screen.setFixedHeight(68)
+        self.timer_screen.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.timer_screen.setStyleSheet("""
             QFrame#TimerScreenFrame {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #060911, stop:1 #0C1220);
                 border: 1px solid rgba(255, 255, 255, 0.06);
                 border-radius: 10px;
             }
         """)
-        screen_layout = QHBoxLayout(timer_screen)
+        screen_layout = QHBoxLayout(self.timer_screen)
         screen_layout.setContentsMargins(12, 0, 12, 0)
         screen_layout.setSpacing(4)
         screen_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -217,7 +218,7 @@ class TimerControlCard(QFrame):
         screen_layout.addWidget(self.slot_s1)
         screen_layout.addWidget(self.slot_s2)
 
-        layout.addWidget(timer_screen)
+        layout.addWidget(self.timer_screen)
 
         # ۳. دکمه‌های کنترل
         btn_row = QHBoxLayout()
@@ -243,16 +244,37 @@ class TimerControlCard(QFrame):
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #34D399, stop:1 #10B981);
                 border-color: #6EE7B7;
             }
-            QPushButton:disabled {
-                background-color: #1A2234;
-                color: #64748B;
-                border-color: rgba(255, 255, 255, 0.05);
-            }
         """)
         self.btn_start.clicked.connect(self._handle_start)
         btn_row.addWidget(self.btn_start)
 
-        self.btn_pause = QPushButton("توقف موقت")
+        # دکمه بازگشایی و لغو قفل (هنگام کلیک اشتباه یا نیاز به اصلاح مجدد)
+        self.btn_reopen = QPushButton("🔓 بازگشایی و ادامه تدوین")
+        self.btn_reopen.setFixedHeight(38)
+        self.btn_reopen.setMinimumWidth(180)
+        self.btn_reopen.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_reopen.setStyleSheet("""
+            QPushButton {
+                font-family: 'Vazirmatn';
+                background-color: rgba(99, 102, 241, 0.15);
+                color: #818CF8;
+                border: 1px solid rgba(99, 102, 241, 0.4);
+                border-radius: 8px;
+                font-size: 12.5px;
+                font-weight: 700;
+                padding: 0 16px;
+            }
+            QPushButton:hover {
+                background-color: #6366F1;
+                color: #FFFFFF;
+                border-color: #818CF8;
+            }
+        """)
+        self.btn_reopen.clicked.connect(self._handle_reopen)
+        self.btn_reopen.setVisible(False)
+        btn_row.addWidget(self.btn_reopen)
+
+        self.btn_pause = QPushButton("توقف موقت جلسه")
         self.btn_pause.setFixedHeight(38)
         self.btn_pause.setMinimumWidth(125)
         self.btn_pause.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -295,18 +317,14 @@ class TimerControlCard(QFrame):
             QPushButton:hover {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FBBF24, stop:1 #F59E0B);
             }
-            QPushButton:disabled {
-                background-color: #1A2234;
-                color: #64748B;
-            }
         """)
         self.btn_resume.clicked.connect(self._handle_resume)
         self.btn_resume.setVisible(False)
         btn_row.addWidget(self.btn_resume)
 
-        self.btn_finish_clip = QPushButton("پایان کار و تکمیل کلیپ")
+        self.btn_finish_clip = QPushButton("تأیید و ثبت نهایی کلیپ")
         self.btn_finish_clip.setFixedHeight(38)
-        self.btn_finish_clip.setMinimumWidth(155)
+        self.btn_finish_clip.setMinimumWidth(160)
         self.btn_finish_clip.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_finish_clip.setStyleSheet("""
             QPushButton {
@@ -364,22 +382,51 @@ class TimerControlCard(QFrame):
         animate = (self.engine.is_running and not self.engine.is_paused)
 
         if self.is_clip_locked:
-            color_hm = "#10B981"
-            color_s = "#059669"
-            colon_c = "#10B981"
+            # حالت تکمیل‌شده: خاکستری، مات و بدون چشمک‌زدن
+            color_hm = "#64748B"
+            color_s = "#475569"
+            colon_c = "#475569"
+            self.timer_screen.setStyleSheet("""
+                QFrame#TimerScreenFrame {
+                    background-color: #101624;
+                    border: 1px solid rgba(255, 255, 255, 0.04);
+                    border-radius: 10px;
+                }
+            """)
         elif not self.engine.is_running:
             color_hm = "#64748B"
             color_s = "#475569"
             colon_c = "#475569"
+            self.timer_screen.setStyleSheet("""
+                QFrame#TimerScreenFrame {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #060911, stop:1 #0C1220);
+                    border: 1px solid rgba(255, 255, 255, 0.06);
+                    border-radius: 10px;
+                }
+            """)
         elif self.engine.is_paused:
             color_hm = "#F8FAFC"
             color_s = "#F59E0B"
             colon_c = "#F59E0B"
+            self.timer_screen.setStyleSheet("""
+                QFrame#TimerScreenFrame {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #060911, stop:1 #0C1220);
+                    border: 1px solid rgba(245, 158, 11, 0.35);
+                    border-radius: 10px;
+                }
+            """)
         else:
             color_hm = "#FFFFFF"
             color_s = "#FBBF24"
             colon_c = "#FBBF24" if self.colon_visible else "rgba(251,191,36,0.2)"
             self.colon_visible = not self.colon_visible
+            self.timer_screen.setStyleSheet("""
+                QFrame#TimerScreenFrame {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #060911, stop:1 #0C1220);
+                    border: 1px solid rgba(99, 102, 241, 0.35);
+                    border-radius: 10px;
+                }
+            """)
 
         self.slot_h1.set_color(color_hm)
         self.slot_h2.set_color(color_hm)
@@ -415,10 +462,12 @@ class TimerControlCard(QFrame):
         self.update_display_state()
 
     def _update_context_label(self):
-        if self.engine.is_running:
-            self.lbl_context.setText(f"پروژه: <b style='color:#F8FAFC;'>{self.project_title}</b> | کلیپ: <span style='color:#818CF8;'>{self.clip_title}</span> <span style='color:#64748B;'>({self.studio_title})</span>")
+        if self.is_clip_locked:
+            self.lbl_context.setText(f"پروژه: <b style='color:#94A3B8;'>{self.project_title}</b> | قطعه: <span style='color:#64748B;'>{self.clip_title} (مختومه)</span>")
+        elif self.engine.is_running:
+            self.lbl_context.setText(f"پروژه فعال: <b style='color:#F8FAFC;'>{self.project_title}</b> | قطعه: <span style='color:#818CF8;'>{self.clip_title}</span> <span style='color:#64748B;'>({self.studio_title})</span>")
         else:
-            self.lbl_context.setText(f"پروژه انتخابی: <b style='color:#F8FAFC;'>{self.project_title}</b> | کلیپ: <span style='color:#818CF8;'>{self.clip_title}</span>")
+            self.lbl_context.setText(f"پروژه انتخابی: <b style='color:#F8FAFC;'>{self.project_title}</b> | قطعه: <span style='color:#818CF8;'>{self.clip_title}</span>")
 
     def _on_timer_tick(self, snap: dict):
         total_time_to_display = self.accumulated_spent_seconds + snap["active_seconds"]
@@ -430,28 +479,29 @@ class TimerControlCard(QFrame):
         if self.is_clip_locked:
             self.pulse_anim.stop()
             self.opacity_effect.setOpacity(1.0)
-            self.btn_start.setVisible(True)
-            self.btn_start.setEnabled(False)
-            self.btn_start.setText("کلیپ تکمیل شده (قفل)")
+            
+            # دکمه شروع مخفی شده و دکمه بازگشایی ظاهر می‌شود
+            self.btn_start.setVisible(False)
+            self.btn_reopen.setVisible(True)
             self.btn_pause.setVisible(False)
             self.btn_resume.setVisible(False)
             self.btn_finish_clip.setVisible(False)
-            self.lbl_status_badge.setText("✓ کلیپ تکمیل و قفل شده")
+            
+            self.lbl_status_badge.setText("🔒 وضعیت: تدوین و رندر نهایی تکمیل شد")
             self.lbl_status_badge.setStyleSheet("""
                 font-family: 'Vazirmatn';
                 font-size: 11px;
                 font-weight: 700;
-                color: #10B981;
-                background-color: rgba(16, 185, 129, 0.15);
-                border: 1px solid rgba(16, 185, 129, 0.35);
+                color: #94A3B8;
+                background-color: #161F30;
+                border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 13px;
                 padding: 0 14px;
             """)
             self._render_timer_display(self.accumulated_spent_seconds)
             return
 
-        self.btn_start.setEnabled(True)
-        self.btn_start.setText("شروع جلسه کاری")
+        self.btn_reopen.setVisible(False)
 
         if self.engine.is_running:
             self.btn_start.setVisible(False)
@@ -464,7 +514,7 @@ class TimerControlCard(QFrame):
                 self.pulse_anim.stop()
                 self.opacity_effect.setOpacity(1.0)
 
-                self.lbl_status_badge.setText("توقف موقت")
+                self.lbl_status_badge.setText("توقف موقت فرآیند")
                 self.lbl_status_badge.setStyleSheet("""
                     font-family: 'Vazirmatn';
                     font-size: 11px;
@@ -480,7 +530,7 @@ class TimerControlCard(QFrame):
                 self.btn_pause.setVisible(True)
                 self.btn_resume.setVisible(False)
 
-                self.lbl_status_badge.setText("در حال ثبت زمان")
+                self.lbl_status_badge.setText("در حال ثبت زمان تدوین")
                 self.lbl_status_badge.setStyleSheet("""
                     font-family: 'Vazirmatn';
                     font-size: 11px;
@@ -504,7 +554,7 @@ class TimerControlCard(QFrame):
             self.btn_resume.setVisible(False)
             self.btn_finish_clip.setVisible(False)
 
-            self.lbl_status_badge.setText("آماده شروع کار")
+            self.lbl_status_badge.setText("آماده شروع فرآیند تدوین")
             self.lbl_status_badge.setStyleSheet("""
                 font-family: 'Vazirmatn';
                 font-size: 11px;
@@ -518,16 +568,14 @@ class TimerControlCard(QFrame):
             self._render_timer_display(self.accumulated_spent_seconds)
 
     def _handle_start(self):
-        if self.is_clip_locked:
-            global_signals.show_toast.emit("این کلیپ تکمیل شده و تایمر آن قفل است.", "warning")
-            return
         if not self.engine.current_project_id:
-            global_signals.show_toast.emit("لطفاً ابتدا یک پروژه یا کلیپ را انتخاب کنید.", "warning")
+            global_signals.show_toast.emit("لطفاً ابتدا یک پروژه یا کلیپ را انتخاب فرمایید.", "warning")
             return
         self.engine.start_session(self.engine.current_project_id, self.engine.current_clip_id)
 
     def _handle_resume(self):
-        if self.is_clip_locked:
-            global_signals.show_toast.emit("این کلیپ تکمیل شده و تایمر آن قفل است.", "warning")
-            return
         self.engine.resume_session()
+
+    def _handle_reopen(self):
+        if self.on_reopen_clip_cb:
+            self.on_reopen_clip_cb()

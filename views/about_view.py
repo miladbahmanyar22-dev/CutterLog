@@ -303,7 +303,7 @@ class AboutView(QWidget):
 
         badge_row = QHBoxLayout()
         badge_row.setSpacing(6)
-        badge_row.addWidget(AboutPillBadge("نسخه 1.0.1", text_color="#A5B4FC", bg_color="rgba(99, 102, 241, 0.12)", border_color="rgba(99, 102, 241, 0.25)"))
+        badge_row.addWidget(AboutPillBadge("نسخه 1.0.3", text_color="#A5B4FC", bg_color="rgba(99, 102, 241, 0.12)", border_color="rgba(99, 102, 241, 0.25)"))
         badge_row.addWidget(AboutPillBadge("وضعیت: در حال توسعه فعال", text_color="#FBBF24", bg_color="rgba(245, 158, 11, 0.10)", border_color="rgba(245, 158, 11, 0.22)"))
         badge_row.addWidget(AboutPillBadge("Windows", text_color="#94A3B8", bg_color="#161F30", border_color="rgba(255, 255, 255, 0.08)"))
         badge_row.addWidget(AboutPillBadge("macOS", text_color="#94A3B8", bg_color="#161F30", border_color="rgba(255, 255, 255, 0.08)"))
@@ -476,7 +476,7 @@ class AboutView(QWidget):
         s_layout.addWidget(lbl_s_title)
 
         specs_items = [
-            ("نسخه فعلی:", "1.0.2"),
+            ("نسخه فعلی:", "1.0.3"),
             ("وضعیت محصول:", "در حال توسعه فعال"),
             ("پلتفرم‌های هدف:", "Windows · macOS"),
             ("زبان و جهت رابط:", "فارسی (RTL)"),
@@ -497,7 +497,7 @@ class AboutView(QWidget):
 
         layout.addWidget(specs_card, stretch=1)
 
-        # تایم‌لاین
+        # تایم‌لاین شکل‌گیری
         timeline_card = QFrame()
         timeline_card.setStyleSheet("""
             background-color: #121826;
@@ -526,7 +526,7 @@ class AboutView(QWidget):
 
         t_layout.addWidget(TimelineNodeWidget(
             year="۱۴۰۵",
-            title="نسخه 1.0.1",
+            title="نسخه 1.0.3",
             description="نسخه رسمی در حال توسعه پایدار و افزایش قابلیت‌های کاربردی.",
             is_latest=True
         ))

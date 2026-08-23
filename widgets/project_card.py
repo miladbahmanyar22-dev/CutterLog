@@ -2,6 +2,7 @@
 # FILE: widgets/project_card.py
 # ==================================================
 from pathlib import Path
+from datetime import datetime
 from PySide6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QMenu, QWidget, QSizePolicy
@@ -152,13 +153,59 @@ class ProjectCard(BaseProjectCard):
             card_type="project"
         )
         self.project = project_data
+        self.is_overdue = False
         self.setFixedHeight(230)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.init_card_content()
 
+    def _apply_card_theme(self):
+        """اعمال تم رنگی اختصاصی در صورت تأخیر در تحویل یا تم استاندارد"""
+        if self.is_overdue:
+            self.setStyleSheet("""
+                QFrame#BaseCardFrame {
+                    background-color: rgba(239, 68, 68, 0.06);
+                    border: 1.5px solid rgba(239, 68, 68, 0.38);
+                    border-radius: 12px;
+                }
+                QFrame#BaseCardFrame:hover {
+                    background-color: rgba(239, 68, 68, 0.10);
+                    border: 1.5px solid #EF4444;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QFrame#BaseCardFrame {
+                    background-color: #121826;
+                    border: 1px solid rgba(255, 255, 255, 0.06);
+                    border-radius: 12px;
+                }
+                QFrame#BaseCardFrame:hover {
+                    background-color: #161F30;
+                    border: 1px solid rgba(99, 102, 241, 0.40);
+                }
+            """)
+
     def init_card_content(self):
         active_rev = self.project.get("active_revision_title")
-        if active_rev:
+        prog_val = self.project.get("progress_pct", 0)
+        c_cnt = self.project.get("completed_clips", 0)
+        t_cnt = self.project.get("total_clips", 0)
+
+        # ۱. ارزیابی هوشمند عبور از ددلاین (Deadline Overdue)
+        self.is_overdue = False
+        if self.project.get("deadline"):
+            now_dt = datetime.utcnow()
+            d_dt = self.project.get("deadline")
+            if isinstance(d_dt, datetime) and (d_dt.date() - now_dt.date()).days < 0 and prog_val < 100:
+                self.is_overdue = True
+
+        self._apply_card_theme()
+
+        if self.is_overdue:
+            status_text = "ددلاین گذشته"
+            status_type = StatusType.DANGER
+            status_symbol = "!"
+        elif active_rev:
             prog_val = self.project.get("rev_progress_pct", 0)
             c_cnt = self.project.get("rev_completed_tasks", 0)
             t_cnt = self.project.get("rev_total_tasks", 0)
@@ -166,10 +213,6 @@ class ProjectCard(BaseProjectCard):
             status_type = StatusType.WARNING
             status_symbol = "●"
         else:
-            prog_val = self.project.get("progress_pct", 0)
-            c_cnt = self.project.get("completed_clips", 0)
-            t_cnt = self.project.get("total_clips", 0)
-            
             status_info = self.project.get("status_info", {})
             status_key = status_info.get("key", "")
             
@@ -264,7 +307,7 @@ class ProjectCard(BaseProjectCard):
             c_cnt = self.project.get("completed_clips", 0)
             t_cnt = self.project.get("total_clips", 0)
             lbl_text = f"کلیپ‌های مراسم: {to_persian_numbers(c_cnt)} از {to_persian_numbers(t_cnt)}"
-            p_color = "#10B981" if prog_val == 100 else "#6366F1"
+            p_color = "#10B981" if prog_val == 100 else ("#EF4444" if self.is_overdue else "#6366F1")
 
         prog_row = QHBoxLayout()
         prog_row.setContentsMargins(0, 2, 0, 0)
@@ -278,22 +321,23 @@ class ProjectCard(BaseProjectCard):
         prog_row.addWidget(lbl_pct_val)
         self.card_layout.addLayout(prog_row)
 
-        # نوار کلیپ‌ها با تعامل مستقیم
         clips_data = self.project.get("clips_list", [])
         self.clip_bar = DynamicClipOverviewBar(clips_data=clips_data, parent=self)
         self.card_layout.addWidget(self.clip_bar)
 
+        info_bg = "rgba(239, 68, 68, 0.08)" if self.is_overdue else "#0F1420"
+        info_border = "rgba(239, 68, 68, 0.20)" if self.is_overdue else "rgba(255, 255, 255, 0.04)"
         info_frame = QFrame()
-        info_frame.setStyleSheet("""
-            QFrame {
-                background-color: #0F1420;
-                border: 1px solid rgba(255, 255, 255, 0.04);
+        info_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {info_bg};
+                border: 1px solid {info_border};
                 border-radius: 7px;
-            }
-            QLabel {
+            }}
+            QLabel {{
                 border: none;
                 background: transparent;
-            }
+            }}
         """)
         info_layout = QHBoxLayout(info_frame)
         info_layout.setContentsMargins(10, 6, 10, 6)
@@ -313,8 +357,9 @@ class ProjectCard(BaseProjectCard):
         lbl_event.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11px; color: #818CF8;")
         info_layout.addWidget(lbl_event)
 
+        dead_color = "#EF4444" if self.is_overdue else "#64748B"
         lbl_dead = QLabel(f"تحویل: {dead_str}")
-        lbl_dead.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11px; color: #64748B;")
+        lbl_dead.setStyleSheet(f"font-family: 'Vazirmatn'; font-size: 11px; color: {dead_color}; font-weight: {'700' if self.is_overdue else 'normal'};")
         info_layout.addWidget(lbl_dead)
 
         self.card_layout.addWidget(info_frame)

@@ -39,6 +39,7 @@ class TimeTrackingEngine(QObject):
         self.is_running = False
         self.auto_suspended = False
 
+        # حافظه ایزوله برای نگهداری وضعیت تایمر هر کلیپ به تفکیک (project_id, clip_id)
         self.sessions_memory: Dict[Tuple[int, Optional[int]], Dict[str, Any]] = {}
         self.last_system_metric: Dict[str, Any] = {}
 
@@ -51,7 +52,7 @@ class TimeTrackingEngine(QObject):
         self.auto_save_timer.timeout.connect(self._persist_active_session)
 
         # ترد پایش فعالیت سیستم
-        self.monitor_thread = SystemActivityMonitorThread(check_interval_sec=1.0, parent=self)
+        self.monitor_thread = SystemActivityMonitorThread(check_interval_sec=2.0, parent=self)
         self.monitor_thread.metrics_updated.connect(self._on_system_metrics)
         self.monitor_thread.start()
 
@@ -96,7 +97,7 @@ class TimeTrackingEngine(QObject):
 
         # پایش هوشمند خروج از محیط تدوین
         if state in ["distraction", "away"] and not is_rendering:
-            self.away_accumulated_seconds += 1
+            self.away_accumulated_seconds += 2  # متناسب با Interval جدید ۲ ثانیه‌ای
             if self.away_accumulated_seconds >= 60 and not self.auto_suspended:
                 self.auto_suspended = True
                 self.pause_session(auto=True)
@@ -150,6 +151,8 @@ class TimeTrackingEngine(QObject):
         global_signals.timer_tick.emit(snapshot)
 
     def select_context(self, project_id: int, clip_id: Optional[int] = None):
+        """تغییر ایزوله کانتکست کاری بین پروژه‌ها و کلیپ‌ها بدون تداخل زمانی"""
+        # ۱. ذخیره وضعیت جلسه فعلی در حافظه سشن‌ها
         if self.current_project_id is not None:
             old_key = (self.current_project_id, self.current_clip_id)
             if self.is_running:
@@ -163,10 +166,12 @@ class TimeTrackingEngine(QObject):
                 }
                 self.tick_timer.stop()
 
+        # ۲. مقداردهی هویت کانتکست جدید
         self.current_project_id = project_id
         self.current_clip_id = clip_id
         new_key = (project_id, clip_id)
 
+        # ۳. بازیابی وضعیت کانتکست جدید در صورت وجود سابقه فعال
         if new_key in self.sessions_memory:
             state = self.sessions_memory[new_key]
             self.active_session_id = state["session_id"]
@@ -342,7 +347,7 @@ class TimeTrackingEngine(QObject):
                             window_title=self.last_system_metric.get("window_title", "")[:240],
                             state=self.last_system_metric.get("state", "editing"),
                             cpu_usage=self.last_system_metric.get("cpu_percent", 0.0),
-                            gpu_usage=self.last_system_metric.get("gpu_percent", 0.0),
+                            gpu_usage=0.0,
                             ram_usage=self.last_system_metric.get("ram_percent", 0.0),
                             user_idle_seconds=self.last_system_metric.get("idle_seconds", 0)
                         )

@@ -10,7 +10,7 @@ import subprocess
 import psutil
 from PySide6.QtCore import QThread, Signal
 
-# نرم‌افزارهای اصلی تدوین
+# لیست پروسه‌های نرم‌افزارهای اصلی تدوین
 CORE_NLE_PROCESSES = {
     "adobe premiere pro.exe": "Premiere Pro",
     "premiere.exe": "Premiere Pro",
@@ -21,7 +21,7 @@ CORE_NLE_PROCESSES = {
     "final cut pro": "Final Cut Pro"
 }
 
-# نرم‌افزارهای کمکی و مجاز
+# لیست پروسه‌های نرم‌افزارهای کمکی
 SUPPORTING_PROCESSES = {
     "photoshop.exe": "Photoshop",
     "illustrator.exe": "Illustrator",
@@ -31,22 +31,73 @@ SUPPORTING_PROCESSES = {
 }
 
 
+def get_real_gpu_metrics() -> tuple[float, float, float, str]:
+    """
+    استخراج دقیق و واقعی درصد لود، VRAM مصرفی، کل VRAM و مدل GPU
+    خروجی: (gpu_percent, vram_used_gb, vram_total_gb, gpu_name)
+    """
+    gpu_util = 0.0
+    vram_used = 0.0
+    vram_total = 0.0
+    gpu_name = ""
+
+    if sys.platform == "win32":
+        # روش ۱: استفاده مستقیم و پایدار از nvidia-smi
+        try:
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            cmd = "nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits"
+            output = subprocess.check_output(cmd, startupinfo=startupinfo, stderr=subprocess.DEVNULL, timeout=0.8).decode("utf-8").strip()
+            if output:
+                line = output.splitlines()[0]
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) >= 4:
+                    gpu_name = parts[0].replace("NVIDIA GeForce", "").replace("NVIDIA", "").strip()
+                    gpu_util = float(parts[1])
+                    vram_used = round(float(parts[2]) / 1024.0, 1)
+                    vram_total = round(float(parts[3]) / 1024.0, 1)
+                    return gpu_util, vram_used, vram_total, gpu_name
+        except Exception:
+            pass
+
+        # روش ۲: فال‌بک امن به WMI و PowerShell در صورت عدم حضور nvidia-smi
+        try:
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            cmd = "powershell -NoProfile -Command \"Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM | ConvertTo-Json\""
+            output = subprocess.check_output(cmd, startupinfo=startupinfo, stderr=subprocess.DEVNULL, timeout=1.0).decode("utf-8").strip()
+            if output:
+                import json
+                data = json.loads(output)
+                if isinstance(data, list):
+                    item = data[0]
+                else:
+                    item = data
+                gpu_name = item.get("Name", "GPU").replace("NVIDIA GeForce", "").replace("AMD Radeon", "Radeon").strip()
+                vram_bytes = int(item.get("AdapterRAM", 0) or 0)
+                if vram_bytes > 0:
+                    vram_total = round(vram_bytes / (1024 ** 3), 1)
+        except Exception:
+            pass
+
+    return gpu_util, vram_used, vram_total, gpu_name
+
+
 def get_hardware_specifications() -> dict:
-    """شناسایی خودکار و Cross-Platform مدل CPU، GPU و حجم کل RAM"""
     specs = {
         "cpu_name": "پردازنده سیستم",
+        "cpu_cores": psutil.cpu_count(logical=True) or 8,
         "gpu_name": "کارت گرافیک",
-        "ram_total_str": "حافظه رم"
+        "vram_total_gb": 0.0,
+        "ram_total_gb": 16.0,
     }
 
-    # ۱. محاسبه حجم کل رم
     try:
-        total_ram_gb = round(psutil.virtual_memory().total / (1024 ** 3))
-        specs["ram_total_str"] = f"{total_ram_gb} GB RAM"
+        mem = psutil.virtual_memory()
+        specs["ram_total_gb"] = round(mem.total / (1024 ** 3), 1)
     except Exception:
-        specs["ram_total_str"] = "RAM"
+        pass
 
-    # ۲. شناسایی نام و مدل پردازنده (CPU)
     try:
         if sys.platform == "win32":
             import winreg
@@ -56,51 +107,21 @@ def get_hardware_specifications() -> dict:
             specs["cpu_name"] = cpu_raw.strip().replace("Processor", "").replace("(R)", "").replace("(TM)", "").strip()
         elif sys.platform == "darwin":
             cmd = ["sysctl", "-n", "machdep.cpu.brand_string"]
-            cpu_raw = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
-            specs["cpu_name"] = cpu_raw
+            specs["cpu_name"] = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
         else:
             specs["cpu_name"] = platform.processor() or "CPU"
     except Exception:
         specs["cpu_name"] = platform.processor() or "CPU"
 
-    # تمیزکاری نام CPU برای نمایش فشرده در تایل
     if "Intel" in specs["cpu_name"]:
         specs["cpu_name"] = specs["cpu_name"].replace("Intel Core", "Core").strip()
     elif "AMD" in specs["cpu_name"]:
         specs["cpu_name"] = specs["cpu_name"].replace("AMD Ryzen", "Ryzen").strip()
 
-    # ۳. شناسایی نام و مدل کارت گرافیک (GPU)
-    try:
-        if sys.platform == "win32":
-            # استفاده از دستور سبک و بدون پنجره wmic/powershell
-            cmd = "powershell -NoProfile -Command \"Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name\""
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            output = subprocess.check_output(
-                cmd, 
-                startupinfo=startupinfo, 
-                stderr=subprocess.DEVNULL, 
-                shell=False
-            ).decode("utf-8", errors="ignore").strip().splitlines()
-
-            # ترجیح کارت‌های مجزا (NVIDIA / AMD) نسبت به گرافیک آنبورد اینتل
-            gpus = [g.strip() for g in output if g.strip()]
-            if gpus:
-                discrete_gpus = [g for g in gpus if "NVIDIA" in g or "Radeon" in g or "RTX" in g or "GTX" in g or "AMD" in g]
-                target_gpu = discrete_gpus[0] if discrete_gpus else gpus[0]
-                # کوتاه‌سازی نام تجاری برای تناسب باکس
-                specs["gpu_name"] = target_gpu.replace("NVIDIA GeForce", "").replace("AMD Radeon", "Radeon").strip()
-        elif sys.platform == "darwin":
-            cmd = ["system_profiler", "SPDisplaysDataType"]
-            output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode()
-            for line in output.splitlines():
-                if "Chipset Model:" in line:
-                    specs["gpu_name"] = line.split(":", 1)[1].strip()
-                    break
-        else:
-            specs["gpu_name"] = "GPU"
-    except Exception:
-        specs["gpu_name"] = "GPU"
+    _, _, vram_tot, live_gpu = get_real_gpu_metrics()
+    if live_gpu:
+        specs["gpu_name"] = live_gpu
+        specs["vram_total_gb"] = vram_tot
 
     return specs
 
@@ -153,27 +174,28 @@ def get_active_window_process_info() -> tuple[str, str]:
 
 
 class SystemActivityMonitorThread(QThread):
+    """ترد اختصاصی پایش زمان واقعی سخت‌افزار با نمونه‌برداری پیوسته"""
     metrics_updated = Signal(dict)
 
-    def __init__(self, check_interval_sec: float = 1.0, parent=None):
+    def __init__(self, check_interval_sec: float = 1.5, parent=None):
         super().__init__(parent)
         self.check_interval_sec = check_interval_sec
         self._is_running = True
-        # شناسایی یک‌باره نام قطعات سخت‌افزار در زمان استارت
         self.hardware_specs = get_hardware_specifications()
 
     def run(self):
-        try:
-            psutil.cpu_percent(interval=None)
-        except Exception:
-            pass
+        # بارگذاری اولیه شمارنده پردازنده
+        psutil.cpu_percent(interval=None)
 
         while self._is_running:
             try:
+                # نمونه‌برداری پایدار ۰.۴ ثانیه‌ای برای محاسبه نرخ واقعی لود CPU
+                cpu_pct = psutil.cpu_percent(interval=0.4)
+
                 idle_sec = get_windows_idle_seconds()
                 win_title, proc_name = get_active_window_process_info()
 
-                active_app_label = "برنامه متفرقه"
+                active_app_label = "برنامه عمومی"
                 is_core_nle = False
                 is_supporting = False
 
@@ -190,11 +212,20 @@ class SystemActivityMonitorThread(QThread):
                             is_supporting = True
                             break
 
-                cpu_pct = psutil.cpu_percent(interval=None)
-                ram_pct = psutil.virtual_memory().percent
-                gpu_pct = min(100.0, cpu_pct * 0.85) if cpu_pct > 65 else min(100.0, cpu_pct * 0.4)
+                # اندازه‌گیری دقیق و واقعی RAM
+                vmem = psutil.virtual_memory()
+                ram_pct = vmem.percent
+                ram_used_gb = round((vmem.total - vmem.available) / (1024 ** 3), 1)
+                ram_free_gb = round(vmem.available / (1024 ** 3), 1)
 
-                is_rendering = (cpu_pct >= 40.0 or gpu_pct >= 35.0)
+                # اندازه‌گیری دقیق و واقعی GPU
+                gpu_pct, vram_used_gb, vram_total_gb, live_gpu_name = get_real_gpu_metrics()
+                if live_gpu_name:
+                    self.hardware_specs["gpu_name"] = live_gpu_name
+                if vram_total_gb > 0:
+                    self.hardware_specs["vram_total_gb"] = vram_total_gb
+
+                is_rendering = (cpu_pct >= 45.0 or gpu_pct >= 40.0)
 
                 if is_rendering:
                     current_state = "processing"
@@ -211,8 +242,11 @@ class SystemActivityMonitorThread(QThread):
                     "state": current_state,
                     "idle_seconds": int(idle_sec),
                     "cpu_percent": float(cpu_pct),
-                    "gpu_percent": float(gpu_pct),
                     "ram_percent": float(ram_pct),
+                    "ram_used_gb": ram_used_gb,
+                    "ram_free_gb": ram_free_gb,
+                    "gpu_percent": float(gpu_pct),
+                    "vram_used_gb": vram_used_gb,
                     "is_rendering": is_rendering,
                     "is_core_nle": is_core_nle,
                     "is_supporting": is_supporting,
@@ -224,7 +258,7 @@ class SystemActivityMonitorThread(QThread):
             except Exception:
                 pass
 
-            time.sleep(self.check_interval_sec)
+            time.sleep(max(0.4, self.check_interval_sec - 0.4))
 
     def stop(self):
         self._is_running = False

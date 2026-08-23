@@ -18,14 +18,14 @@ from core.signals import global_signals
 
 
 class FocusStatusSwitchBlock(QFrame):
-    """باکس برجسته و چشم‌گیر انتخاب وضعیت کلیپ برای جلب توجه مستقیم کاربر بدون آیکون"""
+    """باکس انتخاب رسمی وضعیت مرحله کاری قطعه"""
     valueChanged = Signal(bool)
 
     def __init__(self, is_complete: bool = False, parent=None):
         super().__init__(parent)
         self.is_complete = is_complete
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.init_ui()
 
     def init_ui(self):
@@ -33,17 +33,16 @@ class FocusStatusSwitchBlock(QFrame):
         self.layout.setContentsMargins(10, 10, 10, 10)
         self.layout.setSpacing(8)
 
-        # نوار دکمه‌های انتخاب سگمنتی
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
 
-        self.btn_continue = QPushButton("ادامه جلسه و کار روی کلیپ")
+        self.btn_continue = QPushButton("در جریان تدوین و بازبینی")
         self.btn_continue.setFixedHeight(36)
         self.btn_continue.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_continue.clicked.connect(lambda: self._set_state(False))
         btn_row.addWidget(self.btn_continue, stretch=1)
 
-        self.btn_complete = QPushButton("پایان کار و تکمیل کلیپ")
+        self.btn_complete = QPushButton("خاتمه فرآیند و ثبت خروجی نهایی")
         self.btn_complete.setFixedHeight(36)
         self.btn_complete.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_complete.clicked.connect(lambda: self._set_state(True))
@@ -51,7 +50,6 @@ class FocusStatusSwitchBlock(QFrame):
 
         self.layout.addLayout(btn_row)
 
-        # متن راهنمای پویا متناسب با انتخاب کاربر
         self.lbl_feedback = QLabel()
         self.lbl_feedback.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_feedback.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11px; font-weight: 600; border: none; background: transparent;")
@@ -97,7 +95,7 @@ class FocusStatusSwitchBlock(QFrame):
                     border-radius: 6px;
                 }
             """)
-            self.lbl_feedback.setText("کلیپ ۱۰۰٪ تکمیل می‌شود و تایمر آن قفل خواهد شد.")
+            self.lbl_feedback.setText("کلیپ در وضعیت خروجی نهایی ثبت و آماده تحویل خواهد شد.")
             self.lbl_feedback.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11px; font-weight: 700; color: #10B981; border: none; background: transparent;")
         else:
             self.setStyleSheet("""
@@ -130,7 +128,7 @@ class FocusStatusSwitchBlock(QFrame):
                 }
                 QPushButton:hover { background-color: #161F30; color: #F8FAFC; }
             """)
-            self.lbl_feedback.setText("کلیپ باز می‌ماند و امکان ادامه ثبت زمان با تایمر وجود دارد.")
+            self.lbl_feedback.setText("قطعه در وضعیت باز باقی مانده و امکان ادامه ثبت جلسات کاری وجود دارد.")
             self.lbl_feedback.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11px; font-weight: 600; color: #818CF8; border: none; background: transparent;")
 
 
@@ -143,7 +141,7 @@ class ManualTimeEntryDialog(StudioBaseDialog):
         self.init_ui()
 
     def init_ui(self):
-        self.build_header("ثبت زمان کاری دستی", "ثبت سوابق زمان کار تدوین و اعمال به تایمر کلیپ", icon_name="edit", icon_color="#6366F1")
+        self.build_header("ثبت دستی زمان کاری", "ثبت سوابق تدوین و اعمال مستقیم به زمان‌سنج قطعه", icon_name="edit", icon_color="#6366F1")
 
         # ۱. انتخاب پروژه
         self.container_layout.addWidget(QLabel("انتخاب پروژه:"))
@@ -153,7 +151,7 @@ class ManualTimeEntryDialog(StudioBaseDialog):
         self.container_layout.addWidget(self.combo_project)
 
         # ۲. انتخاب کلیپ
-        self.container_layout.addWidget(QLabel("انتخاب کلیپ:"))
+        self.container_layout.addWidget(QLabel("انتخاب قطعه / کلیپ:"))
         self.combo_clip = QComboBox()
         self.combo_clip.setFixedHeight(36)
         self.container_layout.addWidget(self.combo_clip)
@@ -164,7 +162,7 @@ class ManualTimeEntryDialog(StudioBaseDialog):
 
         col1 = QVBoxLayout()
         col1.setSpacing(3)
-        col1.addWidget(QLabel("مدت زمان به دقیقه:*"))
+        col1.addWidget(QLabel("مدت زمان (دقیقه):*"))
         self.inp_minutes = QLineEdit()
         self.inp_minutes.setFixedHeight(36)
         self.inp_minutes.setPlaceholderText("مثال: 90")
@@ -173,22 +171,22 @@ class ManualTimeEntryDialog(StudioBaseDialog):
 
         col2 = QVBoxLayout()
         col2.setSpacing(3)
-        col2.addWidget(QLabel("مرحله کاری (اختیاری):"))
+        col2.addWidget(QLabel("مرحله فرآیند (اختیاری):"))
         self.inp_stage = QLineEdit()
         self.inp_stage.setFixedHeight(36)
-        self.inp_stage.setPlaceholderText("مثال: راف‌کات، اصلاح رنگ...")
+        self.inp_stage.setPlaceholderText("مثال: راف‌کات، تصحیح رنگ...")
         col2.addWidget(self.inp_stage)
         row.addLayout(col2, stretch=1)
         
         self.container_layout.addLayout(row)
 
-        # ۴. باکس چشم‌گیر وضعیت کلیپ
-        self.container_layout.addWidget(QLabel("تعیین وضعیت کلیپ پس از ثبت زمان:*"))
+        # ۴. باکس وضعیت قطعه
+        self.container_layout.addWidget(QLabel("وضعیت قطعه پس از ثبت زمان:*"))
         self.status_block = FocusStatusSwitchBlock(is_complete=False, parent=self)
         self.container_layout.addWidget(self.status_block)
 
         # ۵. یادداشت فعالیت
-        self.container_layout.addWidget(QLabel("یادداشت فعالیت (اختیاری):"))
+        self.container_layout.addWidget(QLabel("یادداشت و جزئیات فعالیت (اختیاری):"))
         self.txt_note = QTextEdit()
         self.txt_note.setFixedHeight(50)
         self.txt_note.setStyleSheet("background-color: #161F30; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 6px; color: #F8FAFC; font-family: 'Vazirmatn'; font-size: 11.5px;")
@@ -198,7 +196,7 @@ class ManualTimeEntryDialog(StudioBaseDialog):
         btn_box = QHBoxLayout()
         btn_box.setSpacing(8)
 
-        btn_save = QPushButton("ثبت فعالیت دستی")
+        btn_save = QPushButton("ثبت نهایی فعالیت")
         btn_save.setFixedHeight(38)
         btn_save.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_save.setStyleSheet("""
@@ -260,7 +258,7 @@ class ManualTimeEntryDialog(StudioBaseDialog):
         with db.get_session() as session:
             clips = session.scalars(select(ProjectClipItem).where(ProjectClipItem.project_id == pid)).all()
             for c in clips:
-                label = f"{c.clip_name} {'(تکمیل شده)' if c.is_completed else ''}"
+                label = f"{c.clip_name} {'(تأیید نهایی)' if c.is_completed else ''}"
                 self.combo_clip.addItem(label, c.id)
 
         if self.initial_clip_id:
@@ -274,7 +272,7 @@ class ManualTimeEntryDialog(StudioBaseDialog):
         mins_str = normalize_to_english_digits(self.inp_minutes.text().strip())
 
         if not pid or not mins_str.isdigit() or int(mins_str) <= 0:
-            StudioConfirmDialog.ask(self, "خطا", "لطفاً مدت زمان معتبری به دقیقه وارد کنید.", icon_name="alert")
+            StudioConfirmDialog.ask(self, "خطا", "لطفاً مدت زمان معتبری به دقیقه وارد نمایید.", icon_name="alert")
             return
 
         is_complete_selected = self.status_block.is_complete
@@ -312,5 +310,5 @@ class ManualTimeEntryDialog(StudioBaseDialog):
 
         global_signals.session_ended.emit(0)
         global_signals.project_updated.emit(pid)
-        global_signals.show_toast.emit("زمان کاری دستی با موفقیت ثبت شد.", "success")
+        global_signals.show_toast.emit("زمان کاری با موفقیت ثبت شد.", "success")
         self.accept()
