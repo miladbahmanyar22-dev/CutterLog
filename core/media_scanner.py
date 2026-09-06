@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
-from PySide6.QtCore import Qt, QObject, Signal, QRunnable, QThreadPool
+from PySide6.QtCore import Qt, QObject, Signal, QRunnable
 from PySide6.QtGui import QImage, QPixmap
 
 try:

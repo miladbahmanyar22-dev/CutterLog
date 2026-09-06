@@ -18,11 +18,12 @@ from core.settings_manager import SettingsManager
 from core.icon_provider import IconProvider
 from core.signals import global_signals
 from core.persian_utils import (
-    format_toman, normalize_to_english_digits, number_to_persian_words,
+    format_toman, number_to_persian_words,
     parse_jalali_text, get_persian_date_readable, get_deadline_relative_text,
     to_persian_numbers
 )
 from widgets.studio_dialog_base import StudioBaseDialog
+from widgets.custom_inputs import CurrencyLineEdit
 
 
 class NewProjectDialog(StudioBaseDialog):
@@ -105,16 +106,16 @@ class NewProjectDialog(StudioBaseDialog):
                         color: #FFFFFF;
                     }
                 """)
-                btn_amt.clicked.connect(lambda _, v=val: self._apply_amount(v))
+                btn_amt.clicked.connect(lambda _, v=val: self.input_fee.set_amount(v))
                 amounts_box.addWidget(btn_amt)
             amounts_box.addStretch()
             fee_col.addLayout(amounts_box)
 
-        self.input_fee = QLineEdit()
+        self.input_fee = CurrencyLineEdit()
         self.input_fee.setFixedHeight(36)
-        self.input_fee.setPlaceholderText("مبلغ را به تومان وارد کنید (مثال: 15000000)...")
+        self.input_fee.setPlaceholderText("مبلغ را به تومان وارد کنید (مثال: ۱۵,۰۰۰,۰۰۰)...")
         self.input_fee.setStyleSheet("background-color: #161F30; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 0 12px; font-size: 12.5px; color: #F8FAFC;")
-        self.input_fee.textChanged.connect(self._on_fee_changed)
+        self.input_fee.amountChanged.connect(self._on_amount_changed)
         fee_col.addWidget(self.input_fee)
 
         self.lbl_fee_words = QLabel("")
@@ -365,13 +366,9 @@ class NewProjectDialog(StudioBaseDialog):
         self.container_layout.addLayout(btn_layout)
         self._on_event_date_changed(self.input_event_date.text())
 
-    def _apply_amount(self, amount_val: int):
-        self.input_fee.setText(str(amount_val))
-
-    def _on_fee_changed(self, text_val: str):
-        clean = normalize_to_english_digits(text_val)
-        if clean.isdigit() and int(clean) > 0:
-            self.lbl_fee_words.setText(number_to_persian_words(int(clean)))
+    def _on_amount_changed(self, amount: int):
+        if amount > 0:
+            self.lbl_fee_words.setText(number_to_persian_words(amount))
         else:
             self.lbl_fee_words.setText("")
 
@@ -429,8 +426,7 @@ class NewProjectDialog(StudioBaseDialog):
             QMessageBox.warning(self, "خطا", "لطفاً یک استودیو انتخاب کنید.")
             return
 
-        fee_str = normalize_to_english_digits(self.input_fee.text().strip())
-        fee = int(fee_str) if fee_str.isdigit() else 0
+        fee = self.input_fee.get_amount()
 
         event_j = parse_jalali_text(self.input_event_date.text())
         event_dt = datetime.combine(event_j.togregorian(), datetime.min.time()) if event_j else None

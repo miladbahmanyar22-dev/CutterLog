@@ -16,10 +16,11 @@ from database.db_manager import db
 from database.models import Project, Transaction, Client, PaymentTypeEnum
 from core.project_controller import ProjectController
 from core.finance_controller import FinanceController
-from core.persian_utils import normalize_to_english_digits, format_toman, to_persian_numbers
+from core.persian_utils import format_toman, to_persian_numbers
 from core.icon_provider import IconProvider
 from core.signals import global_signals
 from widgets.studio_dialog_base import StudioBaseDialog, StudioConfirmDialog
+from widgets.custom_inputs import CurrencyLineEdit
 
 
 class NewTransactionDialog(StudioBaseDialog):
@@ -145,10 +146,10 @@ class NewTransactionDialog(StudioBaseDialog):
 
         # ۳. فیلد مبلغ
         self.container_layout.addWidget(QLabel("مبلغ واریزی این تراکنش (تومان):"))
-        self.input_amount = QLineEdit()
+        self.input_amount = CurrencyLineEdit()
         self.input_amount.setFixedHeight(36)
         self.input_amount.setPlaceholderText("مبلغ را به تومان وارد کنید...")
-        self.input_amount.textChanged.connect(self._on_amount_changed)
+        self.input_amount.amountChanged.connect(self._on_amount_changed)
         self.container_layout.addWidget(self.input_amount)
 
         self.lbl_amount_preview = QLabel("")
@@ -338,23 +339,20 @@ class NewTransactionDialog(StudioBaseDialog):
 
     def _fill_suggested_amount(self):
         if self.suggested_amount > 0:
-            self.input_amount.setText(str(self.suggested_amount))
+            self.input_amount.set_amount(self.suggested_amount)
 
-    def _on_amount_changed(self, text: str):
-        clean_digits = normalize_to_english_digits(text)
-        if clean_digits.isdigit() and int(clean_digits) > 0:
-            val = int(clean_digits)
-            self.lbl_amount_preview.setText(f"معادل: {format_toman(val)}")
+    def _on_amount_changed(self, amount: int):
+        if amount > 0:
+            self.lbl_amount_preview.setText(f"معادل: {format_toman(amount)}")
         else:
             self.lbl_amount_preview.setText("")
 
     def _submit(self):
-        amount_clean = normalize_to_english_digits(self.input_amount.text())
-        if not amount_clean.isdigit() or int(amount_clean) <= 0:
+        amount = self.input_amount.get_amount()
+        if amount <= 0:
             StudioConfirmDialog.ask(self, "خطا در ثبت واریزی", "لطفاً مبلغ واریزی معتبری وارد کنید.", icon_name="alert")
             return
 
-        amount = int(amount_clean)
         pay_type = self.combo_type.currentData()
         tracking = self.input_tracking.text().strip()
         note = self.input_note.text().strip()

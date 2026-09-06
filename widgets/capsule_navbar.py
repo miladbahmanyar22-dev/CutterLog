@@ -23,7 +23,7 @@ class MatteDeckTabButton(QPushButton):
         super().__init__(parent)
         self.item = item
         self.is_active = False
-        self.mode = "full"  # "full", "compact", "icon_only"
+        self.mode = "full"
 
         self.setCheckable(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -51,7 +51,7 @@ class MatteDeckTabButton(QPushButton):
             self.setText(f" {self.item.title}")
             self.setMinimumWidth(0)
             self.setMaximumWidth(16777215)
-        else:  # full
+        else:
             self.setText(f"  {self.item.title}")
             self.setMinimumWidth(0)
             self.setMaximumWidth(16777215)
@@ -101,7 +101,7 @@ class MatteDeckTabButton(QPushButton):
 class CapsuleNavBar(QFrame):
     page_selected = Signal(int)
 
-    # فهرست کامل تب‌های نوار ناوبری بالا
+    # فهرست کامل ۸ تب ناوبری با دسترسی مستقل به دستیار و زمان‌سنج
     ITEMS = [
         DeckNavItem("پیشخوان", "dashboard", 0, group=1),
         DeckNavItem("پروژه‌ها", "projects", 1, group=1),
@@ -131,7 +131,6 @@ class CapsuleNavBar(QFrame):
             }
         """)
 
-        # خط شاخص متحرک نوری
         self.indicator_line = QFrame(self)
         self.indicator_line.setFixedHeight(2)
         self.indicator_line.setStyleSheet("background-color: #6366F1; border-radius: 1px;")

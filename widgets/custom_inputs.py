@@ -1,9 +1,9 @@
 # ==================================================
-# FILE: C:\Users\Milad\OneDrive\Desktop\CutterLog\widgets\custom_inputs.py
+# FILE: widgets/custom_inputs.py
 # ==================================================
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton, QLineEdit
 from PySide6.QtCore import Qt, Signal
-from core.persian_utils import to_persian_numbers
+from core.persian_utils import to_persian_numbers, normalize_to_english_digits, number_to_persian_words
 
 
 class ModernNumberStepper(QWidget):
@@ -25,7 +25,6 @@ class ModernNumberStepper(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        # دکمه افزایش (+)
         self.btn_plus = QPushButton("+")
         self.btn_plus.setFixedSize(36, 36)
         self.btn_plus.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -51,7 +50,6 @@ class ModernNumberStepper(QWidget):
         self.btn_plus.clicked.connect(self._increment)
         layout.addWidget(self.btn_plus)
 
-        # کادر نمایش عدد
         self.lbl_display = QLabel()
         self.lbl_display.setFixedHeight(36)
         self.lbl_display.setMinimumWidth(110)
@@ -70,7 +68,6 @@ class ModernNumberStepper(QWidget):
         """)
         layout.addWidget(self.lbl_display)
 
-        # دکمه کاهش (−)
         self.btn_minus = QPushButton("−")
         self.btn_minus.setFixedSize(36, 36)
         self.btn_minus.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -146,3 +143,50 @@ class ModernNumberStepper(QWidget):
     def setValue(self, val: int):
         self.current_val = max(self.min_val, min(self.max_val, val))
         self._update_display()
+
+
+class CurrencyLineEdit(QLineEdit):
+    """لاین‌ادیت هوشمند با جداسازی زنده ۳ رقم ۳ رقم و پشتیبانی از اعداد فارسی"""
+    amountChanged = Signal(int)
+
+    def __init__(self, initial_amount: int = 0, parent=None):
+        super().__init__(parent)
+        self._raw_amount = initial_amount
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.textChanged.connect(self._format_text)
+        if initial_amount > 0:
+            self.set_amount(initial_amount)
+
+    def get_amount(self) -> int:
+        return self._raw_amount
+
+    def set_amount(self, amount: int):
+        self._raw_amount = max(0, int(amount))
+        if self._raw_amount == 0:
+            self.setText("")
+        else:
+            formatted = f"{self._raw_amount:,}"
+            self.blockSignals(True)
+            self.setText(to_persian_numbers(formatted))
+            self.blockSignals(False)
+            self.amountChanged.emit(self._raw_amount)
+
+    def _format_text(self, text_val: str):
+        clean = normalize_to_english_digits(text_val).replace(",", "").replace("،", "").strip()
+        if not clean or not clean.isdigit():
+            self._raw_amount = 0
+            if not text_val:
+                self.amountChanged.emit(0)
+            return
+
+        self._raw_amount = int(clean)
+        formatted = f"{self._raw_amount:,}"
+        fa_formatted = to_persian_numbers(formatted)
+
+        cursor_pos = self.cursorPosition()
+        self.blockSignals(True)
+        self.setText(fa_formatted)
+        self.setCursorPosition(min(cursor_pos, len(fa_formatted)))
+        self.blockSignals(False)
+
+        self.amountChanged.emit(self._raw_amount)

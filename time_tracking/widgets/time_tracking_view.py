@@ -16,13 +16,14 @@ from PySide6.QtGui import (
     QPainter, QColor, QFont, QPen, QBrush, 
     QLinearGradient, QPainterPath, QMouseEvent
 )
+from sqlalchemy import select, func
 
 from database.db_manager import db
 from database.models import Project, ProjectClipItem
 from core.project_controller import ProjectController
 from time_tracking.models import WorkSession
 from time_tracking.timer_engine import TimeTrackingEngine
-from time_tracking.widgets.timer_control_card import TimerControlCard, format_seconds_hms
+from time_tracking.widgets.timer_control_card import TimerControlCard
 from time_tracking.widgets.system_monitor_card import SystemMonitorCard
 from time_tracking.widgets.end_session_dialog import (
     PauseSessionNoteDialog, 
@@ -34,14 +35,19 @@ from widgets.studio_dialog_base import StudioConfirmDialog
 from core.persian_utils import to_persian_numbers
 from core.icon_provider import IconProvider
 from core.signals import global_signals
-from sqlalchemy import select, func
+
+
+def safe_format_hms(seconds: Optional[int]) -> str:
+    if not seconds or seconds <= 0:
+        return "00:00:00"
+    total = int(seconds)
+    h = total // 3600
+    m = (total % 3600) // 60
+    s = total % 60
+    return f"{h:02d}:{m:02d}:{s:02d}"
 
 
 class NleStyleTimelineBar(QWidget):
-    """
-    تایم‌لاین رسمی، لوکس و بهینه‌شده به سبک کنسول‌های حرفه‌ای NLE
-    دارای انیمیشن هاور روان، تفکیک رسمی سگمنت‌ها و بدون جلوه‌های کارتونی
-    """
     clip_selected = Signal(int)
 
     def __init__(self, parent=None):
@@ -52,10 +58,8 @@ class NleStyleTimelineBar(QWidget):
         self.active_clip_id: Optional[int] = None
         self.hovered_idx = -1
         self._hover_progress = 0.0
-
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
 
-        # انیمیشن ترنزیشن هاور
         self.hover_anim = QVariantAnimation(self)
         self.hover_anim.setDuration(160)
         self.hover_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
@@ -115,9 +119,8 @@ class NleStyleTimelineBar(QWidget):
             painter.setPen(QPen(QColor(255, 255, 255, 8), 1))
             painter.setBrush(QBrush(QColor("#0F1422")))
             painter.drawRoundedRect(QRectF(0, (h - 38.0) / 2.0, w, 38.0), 6, 6)
-
             painter.setPen(QColor("#64748B"))
-            painter.setFont(QFont("Vazirmatn", 10.5))
+            painter.setFont(QFont("Vazirmatn", 10))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "اطلاعاتی برای نمایش در تایم‌لاین ثبت نشده است.")
             painter.end()
             return
@@ -136,19 +139,16 @@ class NleStyleTimelineBar(QWidget):
             grad = QLinearGradient(rect.x(), rect.y(), rect.x(), rect.y() + rect.height())
 
             if is_active:
-                # سگمنت در حال تدوین فعال
                 grad.setColorAt(0.0, QColor("#4F46E5"))
                 grad.setColorAt(1.0, QColor("#312E81"))
                 border_color = QColor("#818CF8")
                 border_w = 1.4
             elif is_completed:
-                # سگمنت تکمیل‌شده
                 grad.setColorAt(0.0, QColor("#065F46"))
                 grad.setColorAt(1.0, QColor("#022C22"))
                 border_color = QColor("#10B981") if is_hovered else QColor(16, 185, 129, 90)
                 border_w = 1.2 if is_hovered else 0.8
             else:
-                # سگمنت آماده‌به‌کار
                 if is_hovered:
                     grad.setColorAt(0.0, QColor("#1F293D"))
                     grad.setColorAt(1.0, QColor("#151D2D"))
@@ -162,7 +162,6 @@ class NleStyleTimelineBar(QWidget):
 
             painter.fillPath(path, QBrush(grad))
 
-            # خط وضعیت بالای سگمنت
             top_line_rect = QRectF(rect.x(), rect.y(), rect.width(), 2.0)
             line_color = QColor("#A5B4FC") if is_active else (QColor("#34D399") if is_completed else QColor(255, 255, 255, 20))
             painter.setPen(Qt.PenStyle.NoPen)
@@ -175,13 +174,13 @@ class NleStyleTimelineBar(QWidget):
             painter.drawRoundedRect(rect, 6, 6)
 
             clip_name = clip.get("name", f"Clip {idx+1}")
-            dur_str = format_seconds_hms(clip.get("spent_seconds", 0))
+            dur_str = safe_format_hms(clip.get("spent_seconds", 0))
 
             painter.setFont(QFont("Vazirmatn", 9, QFont.Weight.Bold if (is_active or is_hovered) else QFont.Weight.Medium))
             painter.setPen(QColor("#FFFFFF" if (is_active or is_completed) else "#CBD5E1"))
             painter.drawText(QRectF(rect.x() + 3, rect.y() + 4, rect.width() - 6, 16), Qt.AlignmentFlag.AlignCenter, clip_name)
 
-            painter.setFont(QFont("Segoe UI", 8.5, QFont.Weight.Bold))
+            painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
             painter.setPen(QColor("#FBBF24" if is_active else ("#A7F3D0" if is_completed else "#94A3B8")))
             painter.drawText(QRectF(rect.x() + 3, rect.y() + 20, rect.width() - 6, 15), Qt.AlignmentFlag.AlignCenter, to_persian_numbers(dur_str))
 
@@ -206,11 +205,11 @@ class NleStyleTimelineBar(QWidget):
 
             if found_idx != -1:
                 clip = self.clips_data[found_idx]
-                dur_str = format_seconds_hms(clip.get("spent_seconds", 0))
+                dur_str = safe_format_hms(clip.get("spent_seconds", 0))
                 status = "تکمیل شده" if clip.get("is_completed") else "در جریان تدوین"
                 QToolTip.showText(
                     event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos(), 
-                    f"🎬 {clip.get('name')}\n⏱️ کارکرد: {to_persian_numbers(dur_str)}\n📌 وضعیت: {status}", 
+                    f"{clip.get('name')}\nکارکرد: {to_persian_numbers(dur_str)}\nوضعیت: {status}", 
                     self
                 )
             else:
@@ -236,7 +235,6 @@ class NleStyleTimelineBar(QWidget):
 
 
 class ProjectTimelineDashboardCard(QFrame):
-    """کارت اصلی تایم‌لاین با سربرگ استودیویی و آمار اختصاصی هر پروژه"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("StudioNleTimelineCard")
@@ -258,7 +256,6 @@ class ProjectTimelineDashboardCard(QFrame):
         layout.setContentsMargins(14, 10, 14, 10)
         layout.setSpacing(8)
 
-        # سربرگ
         top_row = QHBoxLayout()
         top_row.setSpacing(8)
         top_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
@@ -287,7 +284,6 @@ class ProjectTimelineDashboardCard(QFrame):
 
         layout.addLayout(top_row)
 
-        # نوار رندر تایم‌لاین سگمنتی
         self.timeline_render = NleStyleTimelineBar(self)
         layout.addWidget(self.timeline_render)
 
@@ -324,7 +320,7 @@ class ProjectTimelineDashboardCard(QFrame):
                     "spent_seconds": spent_sec
                 })
 
-        self.lbl_total_time.setText(f"مجموع کارکرد: {to_persian_numbers(format_seconds_hms(total_proj_sec))}")
+        self.lbl_total_time.setText(f"مجموع کارکرد: {to_persian_numbers(safe_format_hms(total_proj_sec))}")
         self.timeline_render.set_timeline_data(clips_data, active_clip_id)
 
 
@@ -475,7 +471,7 @@ class GridClipButton(QPushButton):
         self.clicked.connect(lambda: self.on_click_cb(self.clip_id, self.clip_name) if self.on_click_cb else None)
 
     def _update_text(self):
-        time_badge = f" ({to_persian_numbers(format_seconds_hms(self.spent_seconds))})" if self.spent_seconds > 0 else ""
+        time_badge = f" ({to_persian_numbers(safe_format_hms(self.spent_seconds))})" if self.spent_seconds > 0 else ""
         self.setText(f"{self.clip_name}{time_badge}")
 
     def update_spent_seconds(self, seconds: int):
@@ -519,41 +515,81 @@ class GridClipButton(QPushButton):
             """)
 
 
+class SessionVisualTimelineStrip(QWidget):
+    def __init__(self, active_sec: int = 0, paused_sec: int = 0, idle_sec: int = 0, parent=None):
+        super().__init__(parent)
+        self.active_sec = max(0, active_sec)
+        self.paused_sec = max(0, paused_sec)
+        self.idle_sec = max(0, idle_sec)
+        self.setFixedHeight(4)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Fixed)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        w = float(self.width())
+        h = float(self.height())
+        total_sec = self.active_sec + self.paused_sec + self.idle_sec
+
+        if total_sec <= 0:
+            total_sec = max(1, self.active_sec)
+
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(0, 0, w, h), 2.0, 2.0)
+        painter.setClipPath(path)
+
+        painter.fillRect(QRectF(0, 0, w, h), QColor("#161F30"))
+
+        active_ratio = min(1.0, self.active_sec / total_sec)
+        active_w = w * active_ratio
+        
+        paused_ratio = min(1.0 - active_ratio, self.paused_sec / total_sec)
+        paused_w = w * paused_ratio
+
+        painter.fillRect(QRectF(0, 0, active_w, h), QColor("#10B981"))
+        
+        if paused_w > 0:
+            painter.fillRect(QRectF(active_w, 0, paused_w, h), QColor("#F59E0B"))
+
+        painter.end()
+
+
 class SessionGridCard(QFrame):
     def __init__(self, session_data: dict, on_delete_cb, parent=None):
         super().__init__(parent)
         self.session_data = session_data
         self.on_delete_cb = on_delete_cb
-        self.setFixedHeight(62)
+        self.setFixedHeight(84)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Fixed)
+        
+        is_continuous = session_data.get("is_continuous", False)
+        border_col = "rgba(99, 102, 241, 0.28)" if is_continuous else "rgba(255, 255, 255, 0.06)"
+        
         self.setStyleSheet("""
-            QFrame {
+            QFrame#SessionCardFrame {
                 background-color: #0E1322;
-                border: 1px solid rgba(255, 255, 255, 0.06);
+                border: 1px solid """ + border_col + """;
                 border-radius: 8px;
             }
-            QFrame:hover {
+            QFrame#SessionCardFrame:hover {
                 background-color: #13192C;
-                border-color: rgba(99, 102, 241, 0.3);
+                border-color: rgba(99, 102, 241, 0.45);
             }
             QLabel { background: transparent; border: none; font-family: 'Vazirmatn'; }
         """)
+        self.setObjectName("SessionCardFrame")
         self.init_ui()
 
     def init_ui(self):
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 6, 10, 6)
-        layout.setSpacing(8)
-        layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-
-        info_col = QVBoxLayout()
-        info_col.setSpacing(2)
-        info_col.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(5)
 
         top_row = QHBoxLayout()
         top_row.setSpacing(6)
-        top_row.setAlignment(Qt.AlignmentFlag.AlignRight)
+        top_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         st_str = self.session_data.get("start_str", "--:--")
         et_str = self.session_data.get("end_str", "--:--")
@@ -563,13 +599,50 @@ class SessionGridCard(QFrame):
 
         dur_str = to_persian_numbers(self.session_data.get("duration_hms", "00:00:00"))
         lbl_dur = QLabel(f"⏱️ {dur_str}")
-        lbl_dur.setStyleSheet("font-family: 'Segoe UI', 'Vazirmatn'; font-size: 10.5px; font-weight: 800; color: #10B981; background-color: rgba(16, 185, 129, 0.12); padding: 1px 5px; border-radius: 4px;")
+        lbl_dur.setStyleSheet("""
+            font-family: 'Segoe UI', 'Vazirmatn';
+            font-size: 10px;
+            font-weight: 800;
+            color: #10B981;
+            background-color: rgba(16, 185, 129, 0.12);
+            padding: 1px 5px;
+            border-radius: 4px;
+        """)
         top_row.addWidget(lbl_dur)
 
-        clip_name = self.session_data.get("clip_name", "کارکرد عمومی")
-        lbl_clip = QLabel(f"| {clip_name}")
-        lbl_clip.setStyleSheet("font-size: 11px; font-weight: 800; color: #F8FAFC;")
-        top_row.addWidget(lbl_clip)
+        focus_pct = self.session_data.get("focus_pct", 100)
+        focus_col = "#10B981" if focus_pct >= 80 else ("#F59E0B" if focus_pct >= 60 else "#F87171")
+        lbl_focus = QLabel(f"{to_persian_numbers(focus_pct)}٪ تمرکز")
+        lbl_focus.setStyleSheet("""
+            font-size: 9.5px;
+            font-weight: 700;
+            color: """ + focus_col + """;
+            background-color: """ + focus_col + """18;
+            border: 1px solid """ + focus_col + """33;
+            padding: 1px 5px;
+            border-radius: 4px;
+        """)
+        top_row.addWidget(lbl_focus)
+
+        stage_title = self.session_data.get("stage_name") or "تدوین"
+        stage_map = {
+            "rough_cut": "راف‌کات",
+            "color_audio": "رنگ و صدا",
+            "final_render": "رندر نهایی",
+            "Editing": "تدوین"
+        }
+        display_stage = stage_map.get(stage_title, stage_title)
+        lbl_stage = QLabel(display_stage)
+        lbl_stage.setStyleSheet("""
+            font-size: 9px;
+            font-weight: 700;
+            color: #C084FC;
+            background-color: rgba(192, 132, 252, 0.12);
+            border: 1px solid rgba(192, 132, 252, 0.25);
+            padding: 1px 5px;
+            border-radius: 4px;
+        """)
+        top_row.addWidget(lbl_stage)
 
         if self.session_data.get("is_manual"):
             lbl_badge = QLabel("دستی")
@@ -577,25 +650,97 @@ class SessionGridCard(QFrame):
             top_row.addWidget(lbl_badge)
 
         top_row.addStretch()
-        info_col.addLayout(top_row)
-
-        note_text = self.session_data.get("note") or ""
-        note_display = f"یادداشت: {note_text}" if note_text else "بدون یادداشت ثبت‌شده"
-        note_color = "#C084FC" if note_text else "#64748B"
-        lbl_note = QLabel(note_display)
-        lbl_note.setStyleSheet(f"font-size: 10px; color: {note_color}; font-weight: 500;")
-        info_col.addWidget(lbl_note)
-
-        layout.addLayout(info_col, stretch=1)
 
         btn_del = QPushButton()
-        btn_del.setIcon(IconProvider.get_icon("trash", "#EF4444", size=12))
-        btn_del.setFixedSize(24, 24)
+        btn_del.setIcon(IconProvider.get_icon("trash", "#EF4444", size=11))
+        btn_del.setFixedSize(20, 20)
         btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_del.setToolTip("حذف این جلسه کاری")
-        btn_del.setStyleSheet("QPushButton { background-color: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 4px; } QPushButton:hover { background-color: #EF4444; }")
+        btn_del.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(239, 68, 68, 0.10);
+                border: 1px solid rgba(239, 68, 68, 0.20);
+                border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #EF4444; }
+        """)
         btn_del.clicked.connect(lambda: self.on_delete_cb(self.session_data["id"]))
-        layout.addWidget(btn_del)
+        top_row.addWidget(btn_del)
+        layout.addLayout(top_row)
+
+        act_s = self.session_data.get("active_duration", 0)
+        pau_s = self.session_data.get("paused_duration", 0)
+        idl_s = self.session_data.get("idle_duration", 0)
+        strip = SessionVisualTimelineStrip(act_s, pau_s, idl_s, self)
+        layout.addWidget(strip)
+
+        bot_row = QHBoxLayout()
+        bot_row.setSpacing(6)
+        bot_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        clip_name = self.session_data.get("clip_name", "کارکرد عمومی")
+        lbl_clip = QLabel(clip_name)
+        lbl_clip.setStyleSheet("font-size: 10.5px; font-weight: 700; color: #E2E8F0;")
+        bot_row.addWidget(lbl_clip)
+
+        if self.session_data.get("is_continuous"):
+            lbl_shift = QLabel("🔗 شیفت پیوسته")
+            lbl_shift.setStyleSheet("font-size: 9px; color: #818CF8; font-weight: 600;")
+            bot_row.addWidget(lbl_shift)
+
+        note_text = self.session_data.get("note") or ""
+        note_display = f"| {note_text}" if note_text else "| بدون یادداشت"
+        note_color = "#94A3B8" if note_text else "#475569"
+        lbl_note = QLabel(note_display)
+        lbl_note.setStyleSheet("font-size: 9.5px; color: " + note_color + "; font-weight: 500;")
+        bot_row.addWidget(lbl_note, stretch=1)
+
+        layout.addLayout(bot_row)
+
+
+class SessionsHeaderSummaryStrip(QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setFixedHeight(30)
+        self.setStyleSheet("""
+            QFrame {
+                background-color: #0E1322;
+                border: 1px solid rgba(255, 255, 255, 0.05);
+                border-radius: 6px;
+            }
+            QLabel { background: transparent; border: none; font-family: 'Vazirmatn'; font-size: 10.5px; }
+        """)
+        self.init_ui()
+
+    def init_ui(self):
+        self.layout = QHBoxLayout(self)
+        self.layout.setContentsMargins(10, 0, 10, 0)
+        self.layout.setSpacing(10)
+        self.layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        self.lbl_sessions_count = QLabel("۰ جلسه")
+        self.lbl_sessions_count.setStyleSheet("color: #818CF8; font-weight: 700;")
+        self.layout.addWidget(self.lbl_sessions_count)
+
+        self.layout.addWidget(QLabel("•"))
+
+        self.lbl_total_time = QLabel("مجموع: ۰۰:۰۰:۰۰")
+        self.lbl_total_time.setStyleSheet("color: #10B981; font-weight: 700;")
+        self.layout.addWidget(self.lbl_total_time)
+
+        self.layout.addWidget(QLabel("•"))
+
+        self.lbl_avg_focus = QLabel("میانگین راندمان: ۱۰۰٪")
+        self.lbl_avg_focus.setStyleSheet("color: #FBBF24; font-weight: 700;")
+        self.layout.addWidget(self.lbl_avg_focus)
+
+        self.layout.addStretch()
+
+    def set_summary(self, count: int, total_seconds: int, avg_focus_pct: int):
+        self.lbl_sessions_count.setText(f"{to_persian_numbers(count)} جلسه کاری")
+        self.lbl_total_time.setText(f"مجموع کارکرد: {to_persian_numbers(safe_format_hms(total_seconds))}")
+        self.lbl_avg_focus.setText(f"میانگین راندمان: {to_persian_numbers(avg_focus_pct)}٪")
 
 
 class TimeTrackingView(QWidget):
@@ -671,7 +816,6 @@ class TimeTrackingView(QWidget):
         mid_row = QHBoxLayout()
         mid_row.setSpacing(10)
 
-        # کارت تایمر رسمی با اتصال متد بازگشایی قطعه نهایی‌شده
         self.timer_card = TimerControlCard(
             on_pause_cb=self._handle_pause_with_note,
             on_finish_clip_cb=self._handle_finish_clip_direct,
@@ -700,7 +844,6 @@ class TimeTrackingView(QWidget):
 
         c_lay.addWidget(self._build_project_clip_container())
 
-        # تایم‌لاین رسمی بازطراحی‌شده
         self.nle_timeline_card = ProjectTimelineDashboardCard(self)
         self.nle_timeline_card.timeline_render.clip_selected.connect(self._on_timeline_clip_clicked)
         c_lay.addWidget(self.nle_timeline_card)
@@ -787,15 +930,21 @@ class TimeTrackingView(QWidget):
 
     def _build_session_history_section(self) -> QWidget:
         box = QFrame()
-        box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Minimum)
         box.setStyleSheet("QFrame { background-color: #121826; border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; }")
         lay = QVBoxLayout(box)
-        lay.setContentsMargins(12, 8, 12, 8)
-        lay.setSpacing(6)
+        lay.setContentsMargins(12, 10, 12, 10)
+        lay.setSpacing(8)
 
+        top_h = QHBoxLayout()
         self.lbl_history_title = QLabel("تاریخچه جلسات کاری امروز:")
-        self.lbl_history_title.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11.5px; font-weight: 800; color: #F8FAFC; border: none; background: transparent;")
-        lay.addWidget(self.lbl_history_title)
+        self.lbl_history_title.setStyleSheet("font-family: 'Vazirmatn'; font-size: 12px; font-weight: 800; color: #F8FAFC; border: none; background: transparent;")
+        top_h.addWidget(self.lbl_history_title)
+        top_h.addStretch()
+        lay.addLayout(top_h)
+
+        self.sessions_summary_strip = SessionsHeaderSummaryStrip(box)
+        lay.addWidget(self.sessions_summary_strip)
 
         self.sessions_grid_layout = QGridLayout()
         self.sessions_grid_layout.setSpacing(6)
@@ -949,20 +1098,24 @@ class TimeTrackingView(QWidget):
 
         with db.get_session() as session:
             for idx, c in enumerate(clips):
-                is_active = (self.engine.current_clip_id == c["id"])
+                clip_id = c["id"]
+                clip_name = c["name"]
+                is_completed = c["is_completed"]
+
+                is_active = (self.engine.current_clip_id == clip_id)
                 
                 spent_sec = session.execute(
-                    select(func.sum(WorkSession.active_duration)).where(WorkSession.clip_id == c["id"])
+                    select(func.sum(WorkSession.active_duration)).where(WorkSession.clip_id == clip_id)
                 ).scalar() or 0
 
                 if is_active:
                     active_clip_spent_seconds = spent_sec
-                    active_clip_is_completed = c["is_completed"]
+                    active_clip_is_completed = is_completed
 
                 btn = GridClipButton(
-                    clip_id=c["id"],
-                    clip_name=c["name"],
-                    is_completed=c["is_completed"],
+                    clip_id=clip_id,
+                    clip_name=clip_name,
+                    is_completed=is_completed,
                     spent_seconds=spent_sec,
                     is_active=is_active,
                     on_click_cb=self._select_clip
@@ -1043,41 +1196,90 @@ class TimeTrackingView(QWidget):
         with db.get_session() as session:
             stmt = select(WorkSession).where(WorkSession.start_time >= today_start)
 
+            if self.selected_project_id:
+                stmt = stmt.where(WorkSession.project_id == self.selected_project_id)
+
             if self.engine.current_clip_id:
                 stmt = stmt.where(WorkSession.clip_id == self.engine.current_clip_id)
                 clip_obj = session.get(ProjectClipItem, self.engine.current_clip_id)
                 c_title = clip_obj.clip_name if clip_obj else "کلیپ انتخابی"
                 self.lbl_history_title.setText(f"تاریخچه جلسات امروز کلیپ: <span style='color:#818CF8;'>{c_title}</span>")
             else:
-                self.lbl_history_title.setText("تاریخچه تمام جلسات کاری امروز:")
+                self.lbl_history_title.setText("تاریخچه جلسات کاری امروز پروژه:")
 
             stmt = stmt.order_by(WorkSession.start_time.desc())
             sessions = session.scalars(stmt).all()
 
             if not sessions:
+                if hasattr(self, "sessions_summary_strip"):
+                    self.sessions_summary_strip.setVisible(False)
                 empty_msg = "برای این کلیپ هنوز جلسه کاری ثبت نشده است." if self.engine.current_clip_id else "امروز هنوز جلسه کاری ثبت نشده است."
                 empty_lbl = QLabel(empty_msg)
-                empty_lbl.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11px; color: #64748B; padding: 8px 0;")
+                empty_lbl.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11px; color: #64748B; padding: 14px 0;")
                 empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.sessions_grid_layout.addWidget(empty_lbl, 0, 0, 1, 3)
                 return
 
-            cols = 3
-            for idx, s in enumerate(sessions):
-                st_str = s.start_time.strftime("%H:%M:%S") if s.start_time else "--:--:--"
-                et_str = s.end_time.strftime("%H:%M:%S") if s.end_time else "--:--:--"
-                dur_hms = format_seconds_hms(s.active_duration or 0)
+            if hasattr(self, "sessions_summary_strip"):
+                self.sessions_summary_strip.setVisible(True)
 
-                s_data = {
+            total_active_sec = 0
+            focus_accum = 0
+            s_list_data = []
+
+            for idx, s in enumerate(sessions):
+                act = int(s.active_duration or 0)
+                pau = int(s.paused_duration or 0)
+                idl = int(s.idle_duration or 0)
+                total_s = act + pau + idl
+                
+                total_active_sec += act
+
+                if total_s > 0:
+                    f_pct = int((act / total_s) * 100)
+                else:
+                    f_pct = 100
+                focus_accum += f_pct
+
+                is_continuous = False
+                if idx < len(sessions) - 1:
+                    prev_s = sessions[idx + 1]
+                    if s.start_time and prev_s.end_time:
+                        gap_sec = (s.start_time - prev_s.end_time).total_seconds()
+                        if 0 <= gap_sec <= 900:
+                            is_continuous = True
+
+                st_str = s.start_time.strftime("%H:%M") if s.start_time else "--:--"
+                et_str = s.end_time.strftime("%H:%M") if s.end_time else "--:--"
+                dur_hms = safe_format_hms(act)
+
+                p_name = s.project.couple_names if (s.project and s.project.couple_names) else "پروژه"
+                c_name = s.clip.clip_name if (s.clip and s.clip.clip_name) else "کارکرد عمومی / بدون کلیپ"
+
+                s_list_data.append({
                     "id": s.id,
                     "start_str": st_str,
                     "end_str": et_str,
                     "duration_hms": dur_hms,
-                    "project_name": s.project.couple_names if s.project else "پروژه",
-                    "clip_name": s.clip.clip_name if s.clip else "کارکرد عمومی",
-                    "note": s.note,
-                    "is_manual": s.is_manual
-                }
+                    "active_duration": act,
+                    "paused_duration": pau,
+                    "idle_duration": idl,
+                    "focus_pct": f_pct,
+                    "stage_name": s.stage_name or "تدوین",
+                    "project_name": p_name,
+                    "clip_name": c_name,
+                    "note": s.note or "",
+                    "is_manual": bool(s.is_manual),
+                    "is_continuous": is_continuous
+                })
+
+            sess_len = max(1, len(sessions))
+            avg_focus = focus_accum // sess_len
+            if hasattr(self, "sessions_summary_strip"):
+                self.sessions_summary_strip.set_summary(len(sessions), total_active_sec, avg_focus)
+
+            cols = 3
+            for idx, s_data in enumerate(s_list_data):
                 card = SessionGridCard(s_data, on_delete_cb=self._delete_session)
                 r = idx // cols
                 c = idx % cols
@@ -1105,7 +1307,7 @@ class TimeTrackingView(QWidget):
 
     def _handle_pause_with_note(self):
         active_sec = self.engine.active_seconds
-        dur_str = format_seconds_hms(active_sec)
+        dur_str = safe_format_hms(active_sec)
         clip_name = "کلیپ انتخابی"
         
         cur_proj = next((p for p in self.cached_uncompleted_projects if p["id"] == self.engine.current_project_id), None)
@@ -1129,7 +1331,6 @@ class TimeTrackingView(QWidget):
             self.refresh_dashboard()
 
     def _handle_finish_clip_direct(self):
-        """تأیید خروجی نهایی کلیپ با دیالوگ اختصاصی و شیک استودیو"""
         cur_proj = next((p for p in self.cached_uncompleted_projects if p["id"] == self.engine.current_project_id), None)
         clip_name = "کلیپ"
         if cur_proj:
@@ -1139,7 +1340,7 @@ class TimeTrackingView(QWidget):
                     break
 
         active_sec = self.engine.active_seconds
-        dur_str = format_seconds_hms(active_sec)
+        dur_str = safe_format_hms(active_sec)
 
         diag = FinishClipConfirmDialog(clip_name, total_time_str=dur_str, parent=self.window())
         if diag.exec():
@@ -1148,7 +1349,6 @@ class TimeTrackingView(QWidget):
             self.refresh_dashboard()
 
     def _handle_reopen_clip_direct(self):
-        """بازگشایی مجدد کلیپ و خروج از وضعیت قفل برای ادامه کار یا رفع خطای سهوی"""
         target_clip_id = self.engine.current_clip_id
         if not target_clip_id:
             return

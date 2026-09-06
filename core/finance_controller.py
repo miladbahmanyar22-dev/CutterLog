@@ -213,14 +213,12 @@ class FinanceController:
 
     @staticmethod
     def delete_transaction(transaction_id: int) -> bool:
-        """حذف ایمن تراکنش مالی و بازگردانی مانده حساب"""
         with db.get_session() as session:
             trx = session.get(Transaction, transaction_id)
             if not trx:
                 return False
             
             project_id = trx.project_id
-            client_id = trx.client_id
             amount_val = trx.amount
 
             if project_id:

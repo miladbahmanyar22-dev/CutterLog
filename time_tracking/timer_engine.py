@@ -39,9 +39,9 @@ class TimeTrackingEngine(QObject):
         self.is_running = False
         self.auto_suspended = False
 
-        # حافظه ایزوله برای نگهداری وضعیت تایمر هر کلیپ به تفکیک (project_id, clip_id)
         self.sessions_memory: Dict[Tuple[int, Optional[int]], Dict[str, Any]] = {}
         self.last_system_metric: Dict[str, Any] = {}
+        self._last_logged_state: Optional[str] = None
 
         self.tick_timer = QTimer(self)
         self.tick_timer.setInterval(1000)
@@ -51,7 +51,6 @@ class TimeTrackingEngine(QObject):
         self.auto_save_timer.setInterval(30000)
         self.auto_save_timer.timeout.connect(self._persist_active_session)
 
-        # ترد پایش فعالیت سیستم
         self.monitor_thread = SystemActivityMonitorThread(check_interval_sec=2.0, parent=self)
         self.monitor_thread.metrics_updated.connect(self._on_system_metrics)
         self.monitor_thread.start()
@@ -74,7 +73,7 @@ class TimeTrackingEngine(QObject):
                         "paused_seconds": s.paused_duration or 0,
                         "idle_seconds": s.idle_duration or 0,
                         "is_paused": True,
-                        "is_running": True
+                        "is_running": False
                     }
 
                 if paused_sessions:
@@ -95,9 +94,8 @@ class TimeTrackingEngine(QObject):
         if not self.is_running or self.is_paused:
             return
 
-        # پایش هوشمند خروج از محیط تدوین
         if state in ["distraction", "away"] and not is_rendering:
-            self.away_accumulated_seconds += 2  # متناسب با Interval جدید ۲ ثانیه‌ای
+            self.away_accumulated_seconds += 2
             if self.away_accumulated_seconds >= 60 and not self.auto_suspended:
                 self.auto_suspended = True
                 self.pause_session(auto=True)
@@ -151,39 +149,46 @@ class TimeTrackingEngine(QObject):
         global_signals.timer_tick.emit(snapshot)
 
     def select_context(self, project_id: int, clip_id: Optional[int] = None):
-        """تغییر ایزوله کانتکست کاری بین پروژه‌ها و کلیپ‌ها بدون تداخل زمانی"""
-        # ۱. ذخیره وضعیت جلسه فعلی در حافظه سشن‌ها
-        if self.current_project_id is not None:
-            old_key = (self.current_project_id, self.current_clip_id)
-            if self.is_running:
-                self.sessions_memory[old_key] = {
-                    "session_id": self.active_session_id,
-                    "active_seconds": self.active_seconds,
-                    "paused_seconds": self.paused_seconds,
-                    "idle_seconds": self.idle_seconds,
-                    "is_paused": self.is_paused,
-                    "is_running": self.is_running
-                }
-                self.tick_timer.stop()
+        """تغییر کانتکست با توقف خودکار سشن قبلی جهت جلوگیری از شمارش همزمان"""
+        new_key = (project_id, clip_id)
+        old_key = (self.current_project_id, self.current_clip_id)
 
-        # ۲. مقداردهی هویت کانتکست جدید
+        # اگر کانتکست تغییر نکرده، نیازی به عملیات نیست
+        if self.current_project_id == project_id and self.current_clip_id == clip_id:
+            return
+
+        # ۱. اگر سشنی فعال بود، آن را متوقف و در دیتابیس پایدار کن
+        if self.is_running and not self.is_paused:
+            self.pause_session(auto=True)
+            global_signals.show_toast.emit("جلسه کاری قبلی متوقف شد.", "info")
+
+        # ۲. ذخیره وضعیت کانتکست قبلی
+        if self.current_project_id is not None:
+            self.sessions_memory[old_key] = {
+                "session_id": self.active_session_id,
+                "active_seconds": self.active_seconds,
+                "paused_seconds": self.paused_seconds,
+                "idle_seconds": self.idle_seconds,
+                "is_paused": self.is_paused,
+                "is_running": False
+            }
+
+        self.tick_timer.stop()
+
+        # ۳. تغییر هویت به کانتکست جدید
         self.current_project_id = project_id
         self.current_clip_id = clip_id
-        new_key = (project_id, clip_id)
 
-        # ۳. بازیابی وضعیت کانتکست جدید در صورت وجود سابقه فعال
+        # ۴. بازیابی وضعیت کانتکست جدید (در حالت متوقف)
         if new_key in self.sessions_memory:
             state = self.sessions_memory[new_key]
             self.active_session_id = state["session_id"]
             self.active_seconds = state["active_seconds"]
             self.paused_seconds = state["paused_seconds"]
             self.idle_seconds = state["idle_seconds"]
-            self.is_paused = state["is_paused"]
-            self.is_running = state["is_running"]
+            self.is_paused = True
+            self.is_running = bool(self.active_session_id)
             self.auto_suspended = False
-
-            if self.is_running and not self.is_paused:
-                self.tick_timer.start()
         else:
             self.active_session_id = None
             self.active_seconds = 0
@@ -203,6 +208,11 @@ class TimeTrackingEngine(QObject):
                     global_signals.show_toast.emit("این کلیپ تکمیل شده است و امکان ثبت زمان ندارد.", "warning")
                     return 0
 
+        # اگر در حال حاضر سشنی روی کلیپ دیگری در حال اجراست، متوقف شود
+        if self.is_running and not self.is_paused:
+            self.pause_session(auto=True)
+            global_signals.show_toast.emit("جلسه کاری قبلی متوقف و سشن جدید آغاز شد.", "info")
+
         self.current_project_id = project_id
         self.current_clip_id = clip_id
         self.active_seconds = 0
@@ -212,6 +222,7 @@ class TimeTrackingEngine(QObject):
         self.away_accumulated_seconds = 0
         self.is_paused = False
         self.auto_suspended = False
+        self._last_logged_state = None
 
         with db.get_session() as session:
             new_sess = WorkSession(
@@ -255,6 +266,7 @@ class TimeTrackingEngine(QObject):
             if key in self.sessions_memory:
                 self.sessions_memory[key]["is_paused"] = True
                 self.sessions_memory[key]["active_seconds"] = self.active_seconds
+                self.sessions_memory[key]["is_running"] = False
 
             if self.active_session_id:
                 global_signals.session_paused.emit(self.active_session_id)
@@ -271,6 +283,7 @@ class TimeTrackingEngine(QObject):
             key = (self.current_project_id, self.current_clip_id)
             if key in self.sessions_memory:
                 self.sessions_memory[key]["is_paused"] = False
+                self.sessions_memory[key]["is_running"] = True
 
             if self.active_session_id:
                 global_signals.session_resumed.emit(self.active_session_id)
@@ -340,14 +353,16 @@ class TimeTrackingEngine(QObject):
                     sess.total_duration = self.active_seconds + self.paused_seconds
                     sess.status = SessionStatusEnum.PAUSED if self.is_paused else SessionStatusEnum.ACTIVE
 
-                    if self.last_system_metric:
+                    current_state = self.last_system_metric.get("state")
+                    if current_state and current_state != self._last_logged_state:
+                        self._last_logged_state = current_state
                         log = ActivityLog(
                             session_id=sess.id,
                             application_name=self.last_system_metric.get("active_app", ""),
                             window_title=self.last_system_metric.get("window_title", "")[:240],
-                            state=self.last_system_metric.get("state", "editing"),
+                            state=current_state,
                             cpu_usage=self.last_system_metric.get("cpu_percent", 0.0),
-                            gpu_usage=0.0,
+                            gpu_usage=self.last_system_metric.get("gpu_percent", 0.0),
                             ram_usage=self.last_system_metric.get("ram_percent", 0.0),
                             user_idle_seconds=self.last_system_metric.get("idle_seconds", 0)
                         )

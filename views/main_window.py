@@ -5,13 +5,16 @@ import sys
 from pathlib import Path
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, 
-    QStackedWidget, QFrame, QLabel
+    QStackedWidget, QFrame, QLabel, QGraphicsOpacityEffect
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import (
+    Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint, QSize
+)
 from PySide6.QtGui import QGuiApplication, QCloseEvent, QIcon
 
 from config import APP_NAME, get_asset_path
 from core.signals import global_signals
+from core.icon_provider import IconProvider
 from widgets.capsule_navbar import CapsuleNavBar
 
 # ویوهای اصلی
@@ -23,6 +26,103 @@ from views.audio_vault_view import AudioVaultView
 from views.settings_view import SettingsView
 from views.copilot_view import CopilotView
 from time_tracking.widgets.time_tracking_view import TimeTrackingView
+
+
+class StudioToastNotification(QFrame):
+    """ویجت اعلان شناور مدرن (Toast) با انیمیشن Fade-In و تایمر محو شدن خودکار"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("StudioToastFrame")
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setFixedHeight(40)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setVisible(False)
+
+        self.layout = QHBoxLayout(self)
+        self.layout.setContentsMargins(14, 0, 14, 0)
+        self.layout.setSpacing(8)
+        self.layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.lbl_icon = QLabel()
+        self.lbl_icon.setStyleSheet("background: transparent; border: none;")
+        self.layout.addWidget(self.lbl_icon)
+
+        self.lbl_text = QLabel()
+        self.lbl_text.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11.5px; font-weight: 700; background: transparent; border: none;")
+        self.layout.addWidget(self.lbl_text)
+
+        self.opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self.opacity_effect)
+        self.anim = QPropertyAnimation(self.opacity_effect, b"opacity")
+        self.anim.setDuration(220)
+
+        self.hide_timer = QTimer(self)
+        self.hide_timer.setSingleShot(True)
+        self.hide_timer.timeout.connect(self._fade_out)
+
+    def show_message(self, message: str, toast_type: str = "info"):
+        self.lbl_text.setText(message)
+
+        if toast_type == "success":
+            bg_color = "rgba(16, 185, 129, 0.95)"
+            border_color = "#34D399"
+            text_color = "#FFFFFF"
+            icon_pix = IconProvider.get_pixmap("check", "#FFFFFF", size=13, stroke_width=2.5)
+        elif toast_type == "warning":
+            bg_color = "rgba(245, 158, 11, 0.95)"
+            border_color = "#FBBF24"
+            text_color = "#000000"
+            icon_pix = IconProvider.get_pixmap("alert", "#000000", size=13, stroke_width=2.5)
+        elif toast_type == "error":
+            bg_color = "rgba(239, 68, 68, 0.95)"
+            border_color = "#F87171"
+            text_color = "#FFFFFF"
+            icon_pix = IconProvider.get_pixmap("close", "#FFFFFF", size=13, stroke_width=2.5)
+        else:  # info
+            bg_color = "rgba(99, 102, 241, 0.95)"
+            border_color = "#818CF8"
+            text_color = "#FFFFFF"
+            icon_pix = IconProvider.get_pixmap("info", "#FFFFFF", size=13, stroke_width=2.5)
+
+        self.lbl_icon.setPixmap(icon_pix)
+        self.lbl_text.setStyleSheet(f"font-family: 'Vazirmatn'; font-size: 11.5px; font-weight: 700; color: {text_color}; background: transparent; border: none;")
+        self.setStyleSheet(f"""
+            QFrame#StudioToastFrame {{
+                background-color: {bg_color};
+                border: 1px solid {border_color};
+                border-radius: 20px;
+            }}
+        """)
+
+        self.adjustSize()
+        parent_w = self.parentWidget().width() if self.parentWidget() else 1200
+        parent_h = self.parentWidget().height() if self.parentWidget() else 800
+        self.move(int((parent_w - self.width()) / 2), parent_h - 75)
+        self.raise_()
+
+        self.setVisible(True)
+        self.anim.stop()
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(1.0)
+        self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.anim.start()
+
+        self.hide_timer.start(3200)
+
+    def _fade_out(self):
+        self.anim.stop()
+        self.anim.setStartValue(1.0)
+        self.anim.setEndValue(0.0)
+        self.anim.setEasingCurve(QEasingCurve.Type.InCubic)
+        self.anim.finished.connect(self._on_fade_out_finished)
+        self.anim.start()
+
+    def _on_fade_out_finished(self):
+        try:
+            self.anim.finished.disconnect(self._on_fade_out_finished)
+        except Exception:
+            pass
+        self.setVisible(False)
 
 
 class HeaderActiveSessionIndicator(QFrame):
@@ -124,9 +224,6 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         
-        # ----------------------------------------------------
-        # تنظیم آیکون مستقیماً روی پنجره اصلی (Title Bar & Window)
-        # ----------------------------------------------------
         icon_path = get_asset_path("assets/icons/icon.ico")
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path.resolve())))
@@ -198,6 +295,10 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(self.pages_stack, stretch=1)
 
+        # ویجت سراسری اعلان شناور
+        self.toast_widget = StudioToastNotification(self.central_widget)
+        global_signals.show_toast.connect(self.toast_widget.show_message)
+
         # اتصالات ناوبری
         global_signals.navigate_to_page.connect(self._switch_page)
         global_signals.navigate_and_focus_project.connect(self._go_to_projects_tab)
@@ -263,6 +364,10 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         if hasattr(self, "capsule_nav"):
             self.capsule_nav.update_responsive_layout(self.width())
+        if hasattr(self, "toast_widget") and self.toast_widget.isVisible():
+            parent_w = self.central_widget.width()
+            parent_h = self.central_widget.height()
+            self.toast_widget.move(int((parent_w - self.toast_widget.width()) / 2), parent_h - 75)
 
     def closeEvent(self, event: QCloseEvent):
         try:

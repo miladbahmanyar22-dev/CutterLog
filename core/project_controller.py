@@ -605,19 +605,27 @@ class ProjectController:
             if "nle_project_path" in data:
                 project.nle_project_path = data["nle_project_path"]
 
+            # -----------------------------------------------------------
+            # تطبیق و همگام‌سازی هوشمند کلیپ‌ها بدون حذف شناسه‌های پایگاه داده
+            # -----------------------------------------------------------
             if "clips" in data:
-                existing_clips_map = {c.clip_name: (c.is_completed, c.completed_at) for c in project.clips}
-                for c in list(project.clips):
-                    session.delete(c)
-                session.flush()
-                for clip_name in data["clips"]:
-                    prev_status, prev_dt = existing_clips_map.get(clip_name, (False, None))
-                    session.add(ProjectClipItem(
-                        project_id=project.id,
-                        clip_name=clip_name,
-                        is_completed=prev_status,
-                        completed_at=prev_dt
-                    ))
+                new_clip_names = data["clips"]
+                existing_clips_dict = {c.clip_name: c for c in project.clips}
+
+                # ۱. حذف کلیپ‌هایی که در لیست جدید تیک نخورده‌اند
+                for old_name, old_clip_obj in list(existing_clips_dict.items()):
+                    if old_name not in new_clip_names:
+                        session.delete(old_clip_obj)
+
+                # ۲. افزودن کلیپ‌های جدید بدون دستکاری کلیپ‌های بدون تغییر
+                for name in new_clip_names:
+                    if name not in existing_clips_dict:
+                        session.add(ProjectClipItem(
+                            project_id=project.id,
+                            clip_name=name,
+                            is_completed=False,
+                            completed_at=None
+                        ))
 
             if "primary_path" in data and data["primary_path"]:
                 if project.drive_locations:

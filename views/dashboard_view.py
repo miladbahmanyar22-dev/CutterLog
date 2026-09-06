@@ -30,19 +30,20 @@ class DashboardView(QWidget):
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(28, 16, 28, 16)
-        main_layout.setSpacing(12)
+        main_layout.setContentsMargins(28, 18, 28, 16)
+        main_layout.setSpacing(14)
 
         # ۱. سطر ترکیبی اول: خوش‌آمدگویی/ساعت (راست) + دستیار هوشمند خلاصه (چپ)
         top_bar_row = QHBoxLayout()
-        top_bar_row.setSpacing(12)
+        top_bar_row.setSpacing(14)
 
         self.welcome_header = DashboardWelcomeHeader(self)
-        top_bar_row.addWidget(self.welcome_header, stretch=1)
+        top_bar_row.addWidget(self.welcome_header, stretch=3)
 
         self.copilot_card = CopilotBriefingCard(self)
+        # هدایت مستقیم به صفحه کامل دستیار هوشمند (ایندکس ۷)
         self.copilot_card.open_insights_requested.connect(lambda: global_signals.navigate_to_page.emit(7))
-        top_bar_row.addWidget(self.copilot_card, stretch=1)
+        top_bar_row.addWidget(self.copilot_card, stretch=2)
 
         main_layout.addLayout(top_bar_row)
 

@@ -9,10 +9,10 @@ from PySide6.QtWidgets import (
     QPushButton, QFileDialog, QSizePolicy, QApplication,
     QGridLayout
 )
-from PySide6.QtCore import Qt, Signal, QSize, QRectF
+from PySide6.QtCore import Qt, Signal, QRectF
 from PySide6.QtGui import (
     QDragEnterEvent, QDropEvent, QPixmap, QImage,
-    QPainter, QColor, QLinearGradient, QPen, QPainterPath
+    QPainter, QColor, QLinearGradient, QRadialGradient, QPen, QPainterPath
 )
 
 try:
@@ -306,7 +306,7 @@ class MediaInspectorDialog(StudioBaseDialog):
 
 class MediaInspectorDropZone(QFrame):
     """
-    کارت مدرن، شیشه‌ای و چشم‌نواز آنالیزور فوتج در پیشخوان (Drag & Drop Studio Inspector)
+    کارت مدرن و شیشه‌ای آنالیزور هوشمند فوتج در پیشخوان (Drag & Drop Studio Inspector)
     """
     file_inspected = Signal(dict)
 
@@ -315,26 +315,28 @@ class MediaInspectorDropZone(QFrame):
         self.setObjectName("MediaDropZoneFrame")
         self.setAcceptDrops(True)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        self.setFixedHeight(68)
+        self.setFixedHeight(82)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMouseTracking(True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._is_drag_active = False
+        self._is_hover = False
         self.init_ui()
 
     def init_ui(self):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 10, 16, 10)
+        layout.setContentsMargins(18, 10, 18, 10)
         layout.setSpacing(14)
         layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        # ۱. آیکون کپسولی مانیتورینگ
+        # ۱. آیکون کپسولی آنالیزور
         icon_frame = QFrame()
-        icon_frame.setFixedSize(44, 44)
+        icon_frame.setFixedSize(48, 48)
         icon_frame.setStyleSheet("""
             QFrame {
-                background-color: rgba(99, 102, 241, 0.12);
-                border: 1px solid rgba(99, 102, 241, 0.28);
-                border-radius: 10px;
+                background-color: rgba(99, 102, 241, 0.14);
+                border: 1px solid rgba(99, 102, 241, 0.32);
+                border-radius: 12px;
             }
         """)
         icon_layout = QVBoxLayout(icon_frame)
@@ -342,92 +344,94 @@ class MediaInspectorDropZone(QFrame):
         icon_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         icon_lbl = QLabel()
-        icon_lbl.setPixmap(IconProvider.get_pixmap("nle_launch", "#818CF8", size=20))
+        icon_lbl.setPixmap(IconProvider.get_pixmap("nle_launch", "#A5B4FC", size=21))
         icon_lbl.setStyleSheet("border: none; background: transparent;")
         icon_layout.addWidget(icon_lbl)
         layout.addWidget(icon_frame)
 
-        # ۲. متن‌های عنوان و زیرعنوان همراه با تگ‌های پسوند
+        # ۲. ستون عنوان و راهنما
         info_col = QVBoxLayout()
-        info_col.setSpacing(3)
+        info_col.setSpacing(2)
         info_col.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
         title_row.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-        lbl_title = QLabel("آنالیزور هوشمند فوتج و راش‌ها (Media Inspector)")
-        lbl_title.setStyleSheet("font-family: 'Vazirmatn'; font-size: 13.5px; font-weight: 800; color: #F8FAFC; border: none; background: transparent;")
+        lbl_title = QLabel("آنالیزور هوشمند فوتج و راش‌ها")
+        lbl_title.setStyleSheet("font-family: 'Vazirmatn'; font-size: 13.5px; font-weight: 800; color: #F1F5F9; border: none; background: transparent;")
         title_row.addWidget(lbl_title)
+
+        lbl_en = QLabel("Media Inspector")
+        lbl_en.setStyleSheet("font-family: 'Segoe UI', sans-serif; font-size: 9px; font-weight: 600; color: #56618A; border: none; background: transparent; letter-spacing: 0.3px;")
+        title_row.addWidget(lbl_en)
 
         live_tag = QLabel("⚡ تشخیص آنی")
         live_tag.setStyleSheet("""
             QLabel {
                 font-family: 'Vazirmatn';
-                font-size: 9.5px;
+                font-size: 9px;
                 font-weight: 700;
                 color: #38BDF8;
-                background-color: rgba(56, 189, 248, 0.12);
-                border: 1px solid rgba(56, 189, 248, 0.25);
-                border-radius: 4px;
-                padding: 1px 5px;
+                background-color: rgba(56, 189, 248, 0.08);
+                border: 1px solid rgba(56, 189, 248, 0.16);
+                border-radius: 10px;
+                padding: 2px 8px;
             }
         """)
         title_row.addWidget(live_tag)
         title_row.addStretch()
         info_col.addLayout(title_row)
 
-        sub_row = QHBoxLayout()
-        sub_row.setSpacing(6)
-        sub_row.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        lbl_sub = QLabel("ویدیو را در این کادر رها کنید یا برای تحلیل مشخصات فنی روی آن کلیک کنید")
+        lbl_sub.setStyleSheet("font-family: 'Vazirmatn'; font-size: 10.5px; color: #64748B; border: none; background: transparent;")
+        info_col.addWidget(lbl_sub)
 
-        lbl_sub = QLabel("ویدیو را به این کادر بکشید (Drag & Drop) یا برای تحلیل مشخصات کلیک کنید")
-        lbl_sub.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11px; color: #94A3B8; border: none; background: transparent;")
-        sub_row.addWidget(lbl_sub)
+        # ۳. تگ‌های فرمت پشتیبانی‌شده
+        formats_row = QHBoxLayout()
+        formats_row.setSpacing(6)
+        formats_row.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-        # تگ‌های فرمت پشتیبانی‌شده
-        formats = ["MP4", "MOV", "ProRes", "BRAW", "MXF", "4K"]
+        lbl_fmt_label = QLabel("فرمت‌های پشتیبانی:")
+        lbl_fmt_label.setStyleSheet("font-family: 'Vazirmatn'; font-size: 9px; color: #56618A; font-weight: 600; border: none; background: transparent;")
+        formats_row.addWidget(lbl_fmt_label)
+
+        formats = ["MP4", "MOV", "ProRes", "BRAW", "MXF", "4K UHD"]
         for fmt in formats:
             f_lbl = QLabel(fmt)
             f_lbl.setStyleSheet("""
-                font-family: -apple-system, 'Segoe UI', sans-serif;
-                font-size: 9px;
+                font-family: 'Segoe UI', sans-serif;
+                font-size: 8.5px;
                 font-weight: 700;
-                color: #64748B;
-                background-color: rgba(255, 255, 255, 0.04);
-                border-radius: 3px;
-                padding: 1px 4px;
-                border: none;
+                color: #7D8398;
+                background-color: rgba(255, 255, 255, 0.045);
+                border: 1px solid rgba(255, 255, 255, 0.05);
+                border-radius: 4px;
+                padding: 1px 5px;
             """)
-            sub_row.addWidget(f_lbl)
+            formats_row.addWidget(f_lbl)
 
-        sub_row.addStretch()
-        info_col.addLayout(sub_row)
+        formats_row.addStretch()
+        info_col.addLayout(formats_row)
+
         layout.addLayout(info_col, stretch=1)
 
-        # ۳. دکمه انتخاب فایل
-        btn_select = QPushButton("انتخاب فوتج...")
-        btn_select.setFixedHeight(34)
-        btn_select.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_select.setIcon(IconProvider.get_icon("search", "#FFFFFF", size=12))
-        btn_select.setIconSize(QSize(12, 12))
-        btn_select.setStyleSheet("""
-            QPushButton {
-                font-family: 'Vazirmatn';
-                background-color: #6366F1;
-                color: #FFFFFF;
+        # ۴. نشانگر تعامل (غیرتعاملی)
+        hint_pill = QFrame()
+        hint_pill.setFixedWidth(2)
+        hint_pill.setFixedHeight(38)
+        hint_pill.setStyleSheet("""
+            QFrame {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(99, 102, 241, 0.0),
+                    stop:0.35 rgba(99, 102, 241, 0.45),
+                    stop:0.65 rgba(99, 102, 241, 0.45),
+                    stop:1 rgba(99, 102, 241, 0.0));
                 border: none;
-                border-radius: 7px;
-                padding: 0 16px;
-                font-size: 11.5px;
-                font-weight: 700;
-            }
-            QPushButton:hover {
-                background-color: #4F46E5;
+                border-radius: 1px;
             }
         """)
-        btn_select.clicked.connect(self._select_file_dialog)
-        layout.addWidget(btn_select)
+        layout.addWidget(hint_pill)
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -435,26 +439,44 @@ class MediaInspectorDropZone(QFrame):
 
         rect = QRectF(0, 0, self.width(), self.height())
         path = QPainterPath()
-        path.addRoundedRect(rect, 10, 10)
+        path.addRoundedRect(rect, 14, 14)
         painter.setClipPath(path)
 
+        grad = QLinearGradient(0, 0, self.width(), self.height())
+        grad.setColorAt(0.0, QColor("#0D1321"))
+        grad.setColorAt(0.55, QColor("#101725"))
+        grad.setColorAt(1.0, QColor("#0B111D"))
+        painter.fillRect(rect, grad)
+
+        glow = QRadialGradient(self.width() - 62, self.height() * 0.5, 115)
+        glow.setColorAt(0.0, QColor(99, 102, 241, 26))
+        glow.setColorAt(1.0, QColor(99, 102, 241, 0))
+        painter.fillRect(rect, glow)
+
         if self._is_drag_active:
-            # حالت درگ اکتیو با پس‌زمینه زمردی و حاشیه روشن
-            painter.fillRect(rect, QColor("#14232C"))
+            painter.fillRect(rect, QColor(16, 34, 44, 175))
             pen = QPen(QColor("#10B981"), 1.8, Qt.PenStyle.DashLine)
         else:
-            # حالت عادی استودیویی
-            grad = QLinearGradient(0, 0, self.width(), self.height())
-            grad.setColorAt(0.0, QColor("#121826"))
-            grad.setColorAt(1.0, QColor("#0E131F"))
-            painter.fillRect(rect, grad)
-            pen = QPen(QColor(255, 255, 255, 14), 1.0)
+            pen = QPen(QColor(255, 255, 255, 10), 1.0)
+            if self._is_hover:
+                pen = QPen(QColor(99, 102, 241, 125), 1.0)
+                painter.fillRect(rect, QColor(99, 102, 241, 8))
 
         painter.setClipping(False)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRoundedRect(QRectF(0.5, 0.5, self.width() - 1.0, self.height() - 1.0), 10, 10)
+        painter.drawRoundedRect(QRectF(0.5, 0.5, self.width() - 1.0, self.height() - 1.0), 14, 14)
         painter.end()
+
+    def enterEvent(self, event):
+        self._is_hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._is_hover = False
+        self.update()
+        super().leaveEvent(event)
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
