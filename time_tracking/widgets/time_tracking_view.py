@@ -6,15 +6,13 @@ from typing import Dict, List, Optional
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, 
     QPushButton, QScrollArea, QProgressBar, QGridLayout, 
-    QComboBox, QSizePolicy, QToolTip
+    QComboBox, QSizePolicy
 )
 from PySide6.QtCore import (
-    Qt, QTimer, QRectF, QPointF, QVariantAnimation, 
-    QEasingCurve, Signal
+    Qt, QTimer, QRectF, Signal
 )
 from PySide6.QtGui import (
-    QPainter, QColor, QFont, QPen, QBrush, 
-    QLinearGradient, QPainterPath, QMouseEvent
+    QPainter, QColor, QFont, QFontMetrics, QPen, QBrush, QPainterPath, QMouseEvent
 )
 from sqlalchemy import select, func
 
@@ -32,7 +30,7 @@ from time_tracking.widgets.end_session_dialog import (
 from time_tracking.widgets.manual_entry_dialog import ManualTimeEntryDialog
 from time_tracking.widgets.daily_goal_dialog import DailyGoalSettingDialog
 from widgets.studio_dialog_base import StudioConfirmDialog
-from core.persian_utils import to_persian_numbers
+from core.persian_utils import to_persian_numbers, clean_studio_display_name, format_studio_title
 from core.icon_provider import IconProvider
 from core.signals import global_signals
 
@@ -52,22 +50,12 @@ class NleStyleTimelineBar(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(48)
+        self.setFixedHeight(60)
         self.setMouseTracking(True)
         self.clips_data: List[dict] = []
         self.active_clip_id: Optional[int] = None
         self.hovered_idx = -1
-        self._hover_progress = 0.0
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-
-        self.hover_anim = QVariantAnimation(self)
-        self.hover_anim.setDuration(160)
-        self.hover_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self.hover_anim.valueChanged.connect(self._on_anim_step)
-
-    def _on_anim_step(self, val):
-        self._hover_progress = float(val)
-        self.update()
 
     def set_timeline_data(self, clips: List[dict], active_clip_id: Optional[int] = None):
         self.clips_data = clips
@@ -78,7 +66,7 @@ class NleStyleTimelineBar(QWidget):
         rects = []
         w = float(self.width())
         h = float(self.height())
-        track_h = 38.0
+        track_h = 50.0
         track_y = (h - track_h) / 2.0
 
         if not self.clips_data:
@@ -86,10 +74,10 @@ class NleStyleTimelineBar(QWidget):
 
         total_clips = len(self.clips_data)
         total_time = sum(c.get("spent_seconds", 0) for c in self.clips_data)
-        spacing = 3.5
+        spacing = 4.0
         available_w = max(10.0, w - (spacing * (total_clips - 1)))
 
-        min_w = 80.0
+        min_w = 105.0
         if total_clips * min_w > available_w:
             min_w = available_w / total_clips
 
@@ -114,14 +102,16 @@ class NleStyleTimelineBar(QWidget):
 
         w = float(self.width())
         h = float(self.height())
+        track_h = 50.0
+        track_y = (h - track_h) / 2.0
 
         if not self.clips_data:
             painter.setPen(QPen(QColor(255, 255, 255, 8), 1))
             painter.setBrush(QBrush(QColor("#0F1422")))
-            painter.drawRoundedRect(QRectF(0, (h - 38.0) / 2.0, w, 38.0), 6, 6)
+            painter.drawRoundedRect(QRectF(0, track_y, w, track_h), 8, 8)
             painter.setPen(QColor("#64748B"))
-            painter.setFont(QFont("Vazirmatn", 10))
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "اطلاعاتی برای نمایش در تایم‌لاین ثبت نشده است.")
+            painter.setFont(QFont("Vazirmatn", 10, QFont.Weight.Bold))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "قطعه‌ای برای نمایش در این پروژه تعریف نشده است")
             painter.end()
             return
 
@@ -132,57 +122,89 @@ class NleStyleTimelineBar(QWidget):
             is_completed = clip.get("is_completed", False)
             is_hovered = (idx == self.hovered_idx)
 
-            path = QPainterPath()
-            path.addRoundedRect(rect, 6, 6)
-            painter.setClipPath(path)
-
-            grad = QLinearGradient(rect.x(), rect.y(), rect.x(), rect.y() + rect.height())
+            clip_path = QPainterPath()
+            clip_path.addRoundedRect(rect, 8, 8)
 
             if is_active:
-                grad.setColorAt(0.0, QColor("#4F46E5"))
-                grad.setColorAt(1.0, QColor("#312E81"))
+                bg_color = QColor("#1D253A")
                 border_color = QColor("#818CF8")
-                border_w = 1.4
+                accent_stripe = QColor("#6366F1")
+                border_width = 1.6
             elif is_completed:
-                grad.setColorAt(0.0, QColor("#065F46"))
-                grad.setColorAt(1.0, QColor("#022C22"))
+                bg_color = QColor("#112423")
                 border_color = QColor("#10B981") if is_hovered else QColor(16, 185, 129, 90)
-                border_w = 1.2 if is_hovered else 0.8
+                accent_stripe = QColor("#10B981")
+                border_width = 1.2 if is_hovered else 1.0
             else:
-                if is_hovered:
-                    grad.setColorAt(0.0, QColor("#1F293D"))
-                    grad.setColorAt(1.0, QColor("#151D2D"))
-                    border_color = QColor("#818CF8")
-                    border_w = 1.0
-                else:
-                    grad.setColorAt(0.0, QColor("#161F30"))
-                    grad.setColorAt(1.0, QColor("#0E1420"))
-                    border_color = QColor(255, 255, 255, 15)
-                    border_w = 0.8
+                bg_color = QColor("#182133") if is_hovered else QColor("#131A29")
+                border_color = QColor(255, 255, 255, 25) if is_hovered else QColor(255, 255, 255, 12)
+                accent_stripe = QColor(255, 255, 255, 20)
+                border_width = 1.0
 
-            painter.fillPath(path, QBrush(grad))
+            painter.fillPath(clip_path, QBrush(bg_color))
 
-            top_line_rect = QRectF(rect.x(), rect.y(), rect.width(), 2.0)
-            line_color = QColor("#A5B4FC") if is_active else (QColor("#34D399") if is_completed else QColor(255, 255, 255, 20))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(line_color)
-            painter.drawRect(top_line_rect)
+            stripe_rect = QRectF(rect.x() + 6, rect.y() + 2, rect.width() - 12, 2.0)
+            painter.fillRect(stripe_rect, accent_stripe)
 
-            painter.setClipping(False)
-            painter.setPen(QPen(border_color, border_w))
+            painter.setPen(QPen(border_color, border_width))
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRoundedRect(rect, 6, 6)
+            painter.drawRoundedRect(rect, 8, 8)
 
-            clip_name = clip.get("name", f"Clip {idx+1}")
+            # ۱. میکرو-بج کپسولی تایم در بالا
             dur_str = safe_format_hms(clip.get("spent_seconds", 0))
+            time_display = to_persian_numbers(dur_str)
+            if is_completed:
+                time_display = f"✓ {time_display}"
 
-            painter.setFont(QFont("Vazirmatn", 9, QFont.Weight.Bold if (is_active or is_hovered) else QFont.Weight.Medium))
-            painter.setPen(QColor("#FFFFFF" if (is_active or is_completed) else "#CBD5E1"))
-            painter.drawText(QRectF(rect.x() + 3, rect.y() + 4, rect.width() - 6, 16), Qt.AlignmentFlag.AlignCenter, clip_name)
+            time_font = QFont("Segoe UI", 8, QFont.Weight.Bold)
+            painter.setFont(time_font)
+            fm_time = QFontMetrics(time_font)
+            badge_content_w = fm_time.horizontalAdvance(time_display)
+            badge_w = max(60.0, min(rect.width() - 16.0, badge_content_w + 14.0))
+            badge_h = 16.0
 
-            painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
-            painter.setPen(QColor("#FBBF24" if is_active else ("#A7F3D0" if is_completed else "#94A3B8")))
-            painter.drawText(QRectF(rect.x() + 3, rect.y() + 20, rect.width() - 6, 15), Qt.AlignmentFlag.AlignCenter, to_persian_numbers(dur_str))
+            badge_x = rect.x() + (rect.width() - badge_w) / 2.0
+            badge_y = rect.y() + 7.0
+            badge_rect = QRectF(badge_x, badge_y, badge_w, badge_h)
+
+            time_pill_path = QPainterPath()
+            time_pill_path.addRoundedRect(badge_rect, 8, 8)
+            painter.fillPath(time_pill_path, QBrush(QColor(0, 0, 0, 115)))
+            painter.setPen(QPen(QColor(255, 255, 255, 15), 1))
+            painter.drawRoundedRect(badge_rect, 8, 8)
+
+            if is_active:
+                time_color = QColor("#00F0FF")
+            elif is_completed:
+                time_color = QColor("#34D399")
+            else:
+                time_color = QColor("#FBBF24") if clip.get("spent_seconds", 0) > 0 else QColor("#94A3B8")
+
+            painter.setPen(time_color)
+            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, time_display)
+
+            # ۲. عنوان قطعه در پایین (سایز متعادل ۹.۵ و وزن ملایم نیمه‌بولد)
+            name_font = QFont("Vazirmatn", 9, QFont.Weight.DemiBold)
+            painter.setFont(name_font)
+            fm_name = QFontMetrics(name_font)
+
+            raw_clip_name = clip.get("name", f"قطعه {idx+1}")
+            avail_text_w = int(rect.width() - 14.0)
+            elided_clip_name = fm_name.elidedText(raw_clip_name, Qt.TextElideMode.ElideMiddle, avail_text_w)
+
+            name_y = badge_y + badge_h + 3.0
+            name_h = rect.height() - (name_y - rect.y()) - 4.0
+            name_rect = QRectF(rect.x() + 7.0, name_y, rect.width() - 14.0, name_h)
+
+            if is_active:
+                name_color = QColor("#F8FAFC")
+            elif is_completed:
+                name_color = QColor("#E2E8F0")
+            else:
+                name_color = QColor("#CBD5E1")
+
+            painter.setPen(name_color)
+            painter.drawText(name_rect, Qt.AlignmentFlag.AlignCenter, elided_clip_name)
 
         painter.end()
 
@@ -191,36 +213,21 @@ class NleStyleTimelineBar(QWidget):
         pos = event.position() if hasattr(event, "position") else event.pos()
         found_idx = -1
 
-        for rect, clip, idx in rect_data:
+        for rect, _, idx in rect_data:
             if rect.contains(pos):
                 found_idx = idx
                 break
 
         if found_idx != self.hovered_idx:
             self.hovered_idx = found_idx
-            self.hover_anim.stop()
-            self.hover_anim.setStartValue(0.0)
-            self.hover_anim.setEndValue(1.0)
-            self.hover_anim.start()
-
-            if found_idx != -1:
-                clip = self.clips_data[found_idx]
-                dur_str = safe_format_hms(clip.get("spent_seconds", 0))
-                status = "تکمیل شده" if clip.get("is_completed") else "در جریان تدوین"
-                QToolTip.showText(
-                    event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos(), 
-                    f"{clip.get('name')}\nکارکرد: {to_persian_numbers(dur_str)}\nوضعیت: {status}", 
-                    self
-                )
-            else:
-                QToolTip.hideText()
+            self.update()
 
         super().mouseMoveEvent(event)
 
     def leaveEvent(self, event):
-        self.hovered_idx = -1
-        self.update()
-        QToolTip.hideText()
+        if self.hovered_idx != -1:
+            self.hovered_idx = -1
+            self.update()
         super().leaveEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent):
@@ -239,7 +246,7 @@ class ProjectTimelineDashboardCard(QFrame):
         super().__init__(parent)
         self.setObjectName("StudioNleTimelineCard")
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        self.setFixedHeight(115)
+        self.setFixedHeight(114)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Fixed)
         self.setStyleSheet("""
             QFrame#StudioNleTimelineCard {
@@ -254,7 +261,7 @@ class ProjectTimelineDashboardCard(QFrame):
     def init_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 10, 14, 10)
-        layout.setSpacing(8)
+        layout.setSpacing(6)
 
         top_row = QHBoxLayout()
         top_row.setSpacing(8)
@@ -1020,13 +1027,15 @@ class TimeTrackingView(QWidget):
             if not p.clips:
                 continue
             completed_cnt, total_cnt, pct = ProjectController.calculate_project_progress(p)
-            studio_name = p.client.company if (p.client and p.client.company) else (p.client.full_name if p.client else "بدون استودیو")
+            raw_studio = p.client.company if (p.client and p.client.company) else (p.client.full_name if p.client else "")
+            studio_display = format_studio_title(raw_studio) if raw_studio else "بدون استودیو"
+            
             uncompleted_list.append({
                 "id": p.id,
                 "project_number": p.project_number or p.id,
                 "couple_names": p.couple_names or p.title,
                 "title": p.title,
-                "studio_name": studio_name,
+                "studio_name": studio_display,
                 "progress_pct": pct,
                 "clips": [{"id": c.id, "name": c.clip_name, "is_completed": c.is_completed} for c in p.clips]
             })
@@ -1082,8 +1091,8 @@ class TimeTrackingView(QWidget):
             return
 
         couple_name = cur_proj["couple_names"]
-        studio_name = cur_proj["studio_name"]
-        self.lbl_project_header.setText(f"{couple_name}  <span style='color:#38BDF8;'>(استودیو {studio_name})</span>")
+        clean_s_name = clean_studio_display_name(cur_proj["studio_name"])
+        self.lbl_project_header.setText(f"{couple_name}  <span style='color:#38BDF8;'>(استودیو {clean_s_name})</span>")
         
         clips = cur_proj.get("clips", [])
         
@@ -1130,7 +1139,7 @@ class TimeTrackingView(QWidget):
         
         self.timer_card.set_context(
             couple_name, 
-            studio_name, 
+            clean_s_name, 
             active_clip_name, 
             is_completed=active_clip_is_completed, 
             accumulated_seconds=active_clip_spent_seconds
@@ -1159,9 +1168,10 @@ class TimeTrackingView(QWidget):
             ).scalar() or 0
 
         if cur_proj:
+            clean_s = clean_studio_display_name(cur_proj["studio_name"])
             self.timer_card.set_context(
                 cur_proj["couple_names"], 
-                cur_proj["studio_name"], 
+                clean_s, 
                 clip_name, 
                 is_completed=active_is_completed, 
                 accumulated_seconds=active_spent_sec

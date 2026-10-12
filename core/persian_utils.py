@@ -1,5 +1,5 @@
 # ==================================================
-# FILE: C:\Users\Milad\OneDrive\Desktop\CutterLog\core\persian_utils.py
+# FILE: core/persian_utils.py
 # ==================================================
 from datetime import datetime, date
 from typing import Optional
@@ -139,3 +139,32 @@ def get_deadline_relative_text(deadline_j_date: Optional[jdatetime.date]) -> str
     else:
         passed = abs(delta_days)
         return f"{to_persian_numbers(passed)} روز از مهلت تحویل گذشته ⚠️"
+
+
+def clean_studio_display_name(name: Optional[str], default: str = "بدون استودیو") -> str:
+    """
+    پاکسازی پیشوندهای تکراری نظیر 'استودیو' و 'آتلیه' از ابتدای نام جهت استفاده در برچسب‌های
+    استودیو: {name} یا (استودیو {name}) بدون ایجاد تکرار
+    """
+    if not name:
+        return default
+    text = str(name).strip()
+    prefixes = ["استودیوی ", "استودیو ", "اتلیه ", "آتلیه "]
+    modified = True
+    while modified:
+        modified = False
+        for prefix in prefixes:
+            if text.startswith(prefix):
+                text = text[len(prefix):].strip()
+                modified = True
+    return text if text else default
+
+
+def format_studio_title(name: Optional[str], default: str = "بدون استودیو") -> str:
+    """
+    تولید یک عنوان یکپارچه با پیشوند استاندارد 'استودیو'
+    """
+    cleaned = clean_studio_display_name(name, default=default)
+    if cleaned in ["بدون استودیو", "متفرقه", "عمومی", "استودیوی عمومی"]:
+        return cleaned
+    return f"استودیو {cleaned}"

@@ -1,6 +1,7 @@
 # ==================================================
 # FILE: views/about_view.py
 # ==================================================
+import sys
 from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
@@ -9,31 +10,46 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QSize, QRectF
 from PySide6.QtGui import QPixmap, QPainter, QPainterPath, QColor, QFont, QPen
 
-from config import get_asset_path, get_bundle_dir
+from config import APP_VERSION, get_asset_path, get_bundle_dir
 from core.icon_provider import IconProvider
 from widgets.contact_developer_dialog import ContactDeveloperDialog
 
 
 def get_circular_avatar_pixmap(size: int = 56) -> QPixmap:
-    """تولید آواتار دایره‌ای با فیت دقیق چهره"""
-    candidate_paths = [
-        get_asset_path("developer.jpg"),
-        get_asset_path("developer.png"),
-        get_asset_path("assets/developer.jpg"),
-        get_asset_path("assets/developer.png"),
-        get_asset_path("assets/images/developer.jpg"),
-        get_bundle_dir() / "developer.jpg",
-        get_bundle_dir() / "assets" / "developer.jpg",
-        Path("developer.jpg"),
-        Path("assets/developer.jpg"),
-        Path(__file__).resolve().parent.parent / "assets" / "developer.jpg",
+    """تولید آواتار دایره‌ای با فیت دقیق چهره و سازگاری ۱۰۰٪ با نسخه نصبی (Executable)"""
+    candidate_dirs = [
+        get_bundle_dir(),
+        get_bundle_dir() / "assets",
+        get_bundle_dir() / "assets" / "images",
+        Path(__file__).resolve().parent.parent,
+        Path(__file__).resolve().parent.parent / "assets",
+        Path(__file__).resolve().parent.parent / "assets" / "images",
+        Path.cwd(),
+        Path.cwd() / "assets",
     ]
-    
+    if getattr(sys, "frozen", False):
+        candidate_dirs.append(Path(sys.executable).parent)
+        candidate_dirs.append(Path(sys.executable).parent / "assets")
+        if hasattr(sys, "_MEIPASS"):
+            candidate_dirs.append(Path(sys._MEIPASS))
+            candidate_dirs.append(Path(sys._MEIPASS) / "assets")
+
+    image_names = [
+        "developer.jpg", "developer.png", "developer.jpeg", "developer.webp",
+        "dev.jpg", "dev.png", "avatar.jpg", "avatar.png"
+    ]
+
     img_path = None
-    for p in candidate_paths:
+    for folder in candidate_dirs:
         try:
-            if p.exists() and p.is_file():
-                img_path = p
+            if not folder.exists():
+                continue
+            for name in image_names:
+                candidate = folder / name
+                if candidate.exists() and candidate.is_file():
+                    img_path = candidate
+                    break
+            if img_path:
                 break
         except Exception:
             continue
@@ -76,7 +92,7 @@ def get_circular_avatar_pixmap(size: int = 56) -> QPixmap:
             painter.drawPixmap(int(draw_rect.x()), int(draw_rect.y()), scaled)
 
             painter.setClipping(False)
-            painter.setPen(QPen(QColor(99, 102, 241, 80), 1.2))
+            painter.setPen(QPen(QColor(99, 102, 241, 90), 1.4))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawEllipse(draw_rect)
             painter.end()
@@ -303,7 +319,7 @@ class AboutView(QWidget):
 
         badge_row = QHBoxLayout()
         badge_row.setSpacing(6)
-        badge_row.addWidget(AboutPillBadge("نسخه 1.0.3", text_color="#A5B4FC", bg_color="rgba(99, 102, 241, 0.12)", border_color="rgba(99, 102, 241, 0.25)"))
+        badge_row.addWidget(AboutPillBadge(f"نسخه {APP_VERSION}", text_color="#A5B4FC", bg_color="rgba(99, 102, 241, 0.12)", border_color="rgba(99, 102, 241, 0.25)"))
         badge_row.addWidget(AboutPillBadge("وضعیت: در حال توسعه فعال", text_color="#FBBF24", bg_color="rgba(245, 158, 11, 0.10)", border_color="rgba(245, 158, 11, 0.22)"))
         badge_row.addWidget(AboutPillBadge("Windows", text_color="#94A3B8", bg_color="#161F30", border_color="rgba(255, 255, 255, 0.08)"))
         badge_row.addWidget(AboutPillBadge("macOS", text_color="#94A3B8", bg_color="#161F30", border_color="rgba(255, 255, 255, 0.08)"))
@@ -476,7 +492,7 @@ class AboutView(QWidget):
         s_layout.addWidget(lbl_s_title)
 
         specs_items = [
-            ("نسخه فعلی:", "1.0.3"),
+            ("نسخه فعلی:", APP_VERSION),
             ("وضعیت محصول:", "در حال توسعه فعال"),
             ("پلتفرم‌های هدف:", "Windows · macOS"),
             ("زبان و جهت رابط:", "فارسی (RTL)"),
@@ -526,7 +542,7 @@ class AboutView(QWidget):
 
         t_layout.addWidget(TimelineNodeWidget(
             year="۱۴۰۵",
-            title="نسخه 1.0.3",
+            title=f"نسخه {APP_VERSION}",
             description="نسخه رسمی در حال توسعه پایدار و افزایش قابلیت‌های کاربردی.",
             is_latest=True
         ))

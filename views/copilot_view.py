@@ -8,7 +8,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QScrollArea, QPushButton, QProgressBar, QSizePolicy,
-    QGridLayout
+    QGridLayout, QTextEdit
 )
 from PySide6.QtCore import Qt, QTimer, QSize
 from sqlalchemy import select
@@ -22,13 +22,129 @@ from core.settings_manager import SettingsManager
 from core.project_controller import ProjectController
 from core.finance_controller import FinanceController
 from core.nle_messenger_helper import NleLauncherHelper
-from core.persian_utils import format_toman, to_persian_numbers, gregorian_to_jalali
+from core.persian_utils import format_toman, to_persian_numbers, gregorian_to_jalali, format_studio_title
 from core.signals import global_signals
-from widgets.studio_dialog_base import StudioInputDialog
+from widgets.studio_dialog_base import StudioBaseDialog
+
+
+class QuickScratchpadDialog(StudioBaseDialog):
+    """دیالوگ اختصاصی برای مشاهده، ویرایش، و پاک‌سازی یادداشت‌های سریع میز کار"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedWidth(460)
+        self.init_ui()
+
+    def init_ui(self):
+        self.build_header(
+            title="میز کار و یادداشت سریع",
+            subtitle="نکات ضروری، تایم‌کدهای تدوین، نام موزیک یا کارهای فوری",
+            icon_name="edit",
+            icon_color="#10B981"
+        )
+
+        settings = SettingsManager.load_settings()
+        cur_text = settings.get("copilot_scratchpad_text", "")
+
+        self.txt_editor = QTextEdit()
+        self.txt_editor.setPlaceholderText("تایم‌کدهای اصلاحیه، موزیک‌های مدنظر، نکات پروژه و...")
+        self.txt_editor.setPlainText(cur_text)
+        self.txt_editor.setFixedHeight(150)
+        self.txt_editor.setStyleSheet("""
+            QTextEdit {
+                font-family: 'Vazirmatn';
+                font-size: 11.5px;
+                color: #F8FAFC;
+                background-color: #0E131F;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+                padding: 10px;
+                line-height: 1.5;
+            }
+            QTextEdit:focus {
+                border-color: #10B981;
+                background-color: #121828;
+            }
+        """)
+        self.container_layout.addWidget(self.txt_editor)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+
+        btn_save = QPushButton("ذخیره تغییرات")
+        btn_save.setFixedHeight(34)
+        btn_save.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_save.setStyleSheet("""
+            QPushButton {
+                font-family: 'Vazirmatn';
+                font-size: 11px;
+                font-weight: 700;
+                background-color: #10B981;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 6px;
+                padding: 0 16px;
+            }
+            QPushButton:hover { background-color: #059669; }
+        """)
+        btn_save.clicked.connect(self._save_and_close)
+        btn_row.addWidget(btn_save, stretch=2)
+
+        btn_clear = QPushButton("پاک کردن یادداشت")
+        btn_clear.setFixedHeight(34)
+        btn_clear.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_clear.setStyleSheet("""
+            QPushButton {
+                font-family: 'Vazirmatn';
+                font-size: 11px;
+                font-weight: 600;
+                background-color: rgba(239, 68, 68, 0.12);
+                color: #F87171;
+                border: 1px solid rgba(239, 68, 68, 0.25);
+                border-radius: 6px;
+            }
+            QPushButton:hover { background-color: #DC2626; color: #FFFFFF; }
+        """)
+        btn_clear.clicked.connect(self._clear_text)
+        btn_row.addWidget(btn_clear, stretch=1)
+
+        btn_cancel = QPushButton("بستن")
+        btn_cancel.setFixedHeight(34)
+        btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_cancel.setStyleSheet("""
+            QPushButton {
+                font-family: 'Vazirmatn';
+                font-size: 11px;
+                font-weight: 500;
+                background-color: #161F30;
+                color: #94A3B8;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 6px;
+            }
+            QPushButton:hover { color: #FFFFFF; background-color: #1E283D; }
+        """)
+        btn_cancel.clicked.connect(self.reject)
+        btn_row.addWidget(btn_cancel, stretch=1)
+
+        self.container_layout.addLayout(btn_row)
+
+    def _save_and_close(self):
+        new_text = self.txt_editor.toPlainText().strip()
+        settings = SettingsManager.load_settings()
+        settings["copilot_scratchpad_text"] = new_text
+        SettingsManager.save_settings(settings)
+        global_signals.show_toast.emit("یادداشت با موفقیت ذخیره شد.", "success")
+        self.accept()
+
+    def _clear_text(self):
+        self.txt_editor.clear()
+        settings = SettingsManager.load_settings()
+        settings["copilot_scratchpad_text"] = ""
+        SettingsManager.save_settings(settings)
+        global_signals.show_toast.emit("یادداشت پاک شد.", "warning")
+        self.accept()
 
 
 class CommandHeaderBar(QFrame):
-    """هدر فشرده و زنده مرکز فرماندهی"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -63,7 +179,7 @@ class CommandHeaderBar(QFrame):
 
         layout.addLayout(title_col)
 
-        self.lbl_live_status = QLabel("● تحلیل خودکار فعال")
+        self.lbl_live_status = QLabel("تحلیل خودکار فعال")
         self.lbl_live_status.setStyleSheet("""
             font-size: 10px; font-weight: 700; color: #10B981;
             background: rgba(16, 185, 129, 0.12);
@@ -99,11 +215,10 @@ class CommandHeaderBar(QFrame):
 
 
 class TodayOverviewBar(QFrame):
-    """نوار افقی پیام وضعیت و ۴ کارت شاخص کلیدی روزانه"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        self.setFixedHeight(66)
+        self.setFixedHeight(68)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setStyleSheet("""
             QFrame#TodayOverviewCard {
@@ -118,16 +233,16 @@ class TodayOverviewBar(QFrame):
 
     def init_ui(self):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 8, 16, 8)
-        layout.setSpacing(14)
+        layout.setContentsMargins(18, 8, 18, 8)
+        layout.setSpacing(16)
         layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         greeting_col = QVBoxLayout()
         greeting_col.setSpacing(2)
         greeting_col.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        self.lbl_greeting = QLabel("سلام 👋")
-        self.lbl_greeting.setStyleSheet("font-size: 13.5px; font-weight: 800; color: #F8FAFC;")
+        self.lbl_greeting = QLabel("سلام میلاد")
+        self.lbl_greeting.setStyleSheet("font-size: 14px; font-weight: 800; color: #F8FAFC;")
         greeting_col.addWidget(self.lbl_greeting)
 
         self.lbl_attention = QLabel("امروز ۲ موضوع مهم نیازمند اقدام فوری شماست.")
@@ -135,42 +250,56 @@ class TodayOverviewBar(QFrame):
         greeting_col.addWidget(self.lbl_attention)
 
         layout.addLayout(greeting_col, stretch=2)
-        layout.addWidget(self._create_v_line())
 
-        self.kpi_proj = self._create_kpi_cell("پیشرفت پایپ‌لاین:", "۰٪", "#818CF8")
-        self.kpi_fin = self._create_kpi_cell("وصول مالی:", "۰٪", "#10B981")
-        self.kpi_time = self._create_kpi_cell("کارکرد امروز:", "۰۰:۰۰", "#FBBF24")
-        self.kpi_tasks = self._create_kpi_cell("اقدامات معوق:", "۰ مورد", "#F87171")
-
-        layout.addLayout(self.kpi_proj["layout"], stretch=1)
-        layout.addLayout(self.kpi_fin["layout"], stretch=1)
-        layout.addLayout(self.kpi_time["layout"], stretch=1)
-        layout.addLayout(self.kpi_tasks["layout"], stretch=1)
-
-    def _create_v_line(self) -> QFrame:
         line = QFrame()
         line.setFrameShape(QFrame.Shape.VLine)
-        line.setFixedHeight(28)
-        line.setStyleSheet("background-color: rgba(255, 255, 255, 0.05); border: none;")
-        return line
+        line.setFixedHeight(30)
+        line.setStyleSheet("background-color: rgba(255, 255, 255, 0.06); border: none;")
+        layout.addWidget(line)
+
+        kpis_row = QHBoxLayout()
+        kpis_row.setSpacing(10)
+
+        self.kpi_proj = self._create_kpi_cell("پیشرفت پایپ‌لاین", "۰٪", "#818CF8")
+        self.kpi_fin = self._create_kpi_cell("وصول مالی", "۰٪", "#10B981")
+        self.kpi_time = self._create_kpi_cell("کارکرد امروز", "۰۰:۰۰", "#FBBF24")
+        self.kpi_tasks = self._create_kpi_cell("اقدامات معوق", "۰ مورد", "#F87171")
+
+        kpis_row.addWidget(self.kpi_proj["frame"])
+        kpis_row.addWidget(self.kpi_fin["frame"])
+        kpis_row.addWidget(self.kpi_time["frame"])
+        kpis_row.addWidget(self.kpi_tasks["frame"])
+
+        layout.addLayout(kpis_row, stretch=3)
 
     def _create_kpi_cell(self, label: str, val: str, col: str) -> dict:
-        box = QVBoxLayout()
-        box.setSpacing(1)
+        frame = QFrame()
+        frame.setStyleSheet("""
+            QFrame {
+                background-color: #161F30;
+                border: none;
+                border-radius: 6px;
+            }
+        """)
+        box = QVBoxLayout(frame)
+        box.setContentsMargins(10, 6, 10, 6)
+        box.setSpacing(2)
         box.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         lbl_k = QLabel(label)
-        lbl_k.setStyleSheet("font-size: 10.5px; color: #64748B;")
+        lbl_k.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_k.setStyleSheet("font-size: 10px; color: #94A3B8; font-weight: 700;")
         box.addWidget(lbl_k)
 
         lbl_v = QLabel(val)
+        lbl_v.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl_v.setStyleSheet(f"font-size: 13.5px; font-weight: 800; color: {col};")
         box.addWidget(lbl_v)
 
-        return {"layout": box, "val_lbl": lbl_v, "key_lbl": lbl_k}
+        return {"frame": frame, "val_lbl": lbl_v, "key_lbl": lbl_k}
 
     def update_metrics(self, editor_name: str, attention_text: str, proj_pct: int, fin_pct: int, time_hms: str, tasks_cnt: int):
-        self.lbl_greeting.setText(f"سلام {editor_name} 👋")
+        self.lbl_greeting.setText(f"سلام {editor_name}")
         self.lbl_attention.setText(attention_text)
         self.kpi_proj["val_lbl"].setText(f"{to_persian_numbers(proj_pct)}٪")
         self.kpi_fin["val_lbl"].setText(f"{to_persian_numbers(fin_pct)}٪")
@@ -179,7 +308,6 @@ class TodayOverviewBar(QFrame):
 
 
 class MainCopilotDecisionCard(QFrame):
-    """کارت اصلی تصمیم هوشمند دستیار"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -205,23 +333,23 @@ class MainCopilotDecisionCard(QFrame):
         top_row = QHBoxLayout()
         top_row.setSpacing(8)
 
-        lbl_badge = QLabel("🧠 پیشنهاد اولویت اول Copilot")
+        lbl_badge = QLabel("پیشنهاد اولویت اول هوش مصنوعی")
         lbl_badge.setStyleSheet("font-size: 12.5px; font-weight: 900; color: #818CF8;")
         top_row.addWidget(lbl_badge)
 
-        self.lbl_reason_tag = QLabel("تحلیل زنده • بر مبنای ددلاین و راش‌های پروژه")
-        self.lbl_reason_tag.setStyleSheet("font-size: 9.5px; color: #94A3B8; background-color: rgba(255,255,255,0.03); border-radius: 4px; padding: 2px 6px;")
+        self.lbl_reason_tag = QLabel("تحلیل زنده بر مبنای ددلاین و وضعیت راش‌ها")
+        self.lbl_reason_tag.setStyleSheet("font-size: 10px; color: #94A3B8; background-color: rgba(255,255,255,0.03); border-radius: 4px; padding: 2px 8px;")
         top_row.addWidget(self.lbl_reason_tag)
 
         top_row.addStretch()
 
-        self.btn_why = QPushButton("چرا این پیشنهاد؟ ▾")
+        self.btn_why = QPushButton("جزئیات تحلیل")
         self.btn_why.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_why.setStyleSheet("""
             QPushButton {
                 font-family: 'Vazirmatn'; font-size: 10.5px; font-weight: 700; color: #38BDF8;
                 background-color: rgba(56, 189, 248, 0.10); border: 1px solid rgba(56, 189, 248, 0.25);
-                border-radius: 5px; padding: 3px 8px;
+                border-radius: 5px; padding: 3px 10px;
             }
             QPushButton:hover { background-color: #38BDF8; color: #000; }
         """)
@@ -258,40 +386,40 @@ class MainCopilotDecisionCard(QFrame):
         btn_bar = QHBoxLayout()
         btn_bar.setSpacing(8)
 
-        self.btn_action_start = QPushButton("شروع جلسه تدوین ⏱️")
+        self.btn_action_start = QPushButton("شروع تدوین")
         self.btn_action_start.setFixedHeight(34)
         self.btn_action_start.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_action_start.setStyleSheet("""
             QPushButton {
                 font-family: 'Vazirmatn'; font-size: 11.5px; font-weight: 800; color: #FFFFFF;
-                background-color: #10B981; border: none; border-radius: 6px; padding: 0 14px;
+                background-color: #10B981; border: none; border-radius: 6px; padding: 0 16px;
             }
             QPushButton:hover { background-color: #059669; }
         """)
         self.btn_action_start.clicked.connect(self._on_start_work)
         btn_bar.addWidget(self.btn_action_start)
 
-        self.btn_action_nle = QPushButton("اجرای فایل NLE 🎬")
+        self.btn_action_nle = QPushButton("اجرای نرم‌افزار تدوین")
         self.btn_action_nle.setFixedHeight(34)
         self.btn_action_nle.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_action_nle.setStyleSheet("""
             QPushButton {
                 font-family: 'Vazirmatn'; font-size: 11.5px; font-weight: 700; color: #FFFFFF;
-                background-color: #6366F1; border: none; border-radius: 6px; padding: 0 14px;
+                background-color: #6366F1; border: none; border-radius: 6px; padding: 0 16px;
             }
             QPushButton:hover { background-color: #4F46E5; }
         """)
         self.btn_action_nle.clicked.connect(self._on_launch_nle)
         btn_bar.addWidget(self.btn_action_nle)
 
-        self.btn_action_view = QPushButton("مشاهده پرونده پروژه ←")
+        self.btn_action_view = QPushButton("مشاهده پرونده پروژه")
         self.btn_action_view.setFixedHeight(34)
         self.btn_action_view.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_action_view.setStyleSheet("""
             QPushButton {
                 font-family: 'Vazirmatn'; font-size: 11px; font-weight: 600; color: #94A3B8;
                 background-color: #161F30; border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 6px; padding: 0 12px;
+                border-radius: 6px; padding: 0 14px;
             }
             QPushButton:hover { color: #F8FAFC; border-color: #6366F1; background-color: #1E283D; }
         """)
@@ -304,7 +432,7 @@ class MainCopilotDecisionCard(QFrame):
     def _toggle_why(self):
         self.is_explanation_open = not self.is_explanation_open
         self.why_panel.setVisible(self.is_explanation_open)
-        self.btn_why.setText("بستن توضیح ▴" if self.is_explanation_open else "چرا این پیشنهاد؟ ▾")
+        self.btn_why.setText("بستن جزئیات" if self.is_explanation_open else "جزئیات تحلیل")
 
     def set_content(self, project_id: Optional[int], insight_text: str, why_points: List[str]):
         self.current_project_id = project_id
@@ -335,73 +463,91 @@ class MainCopilotDecisionCard(QFrame):
 
 
 class SmartPriorityItemRow(QFrame):
-    """سطر هر اولویت با بج‌های شیشه‌ای و دکمه‌های اکشن استاندارد استودیو"""
-    def __init__(self, rank: str, tag: str, title: str, reason: str, action_label: str, tag_color: str, on_action_cb, parent=None):
+    def __init__(self, rank: str, tag: str, title: str, reason: str, action_label: str, tag_style: dict, on_action_cb, parent=None):
         super().__init__(parent)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        self.setFixedHeight(46)
+        self.setFixedHeight(52)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setStyleSheet("""
             QFrame#PriorityRow {
-                background-color: #141B2A;
+                background-color: #131927;
                 border: 1px solid rgba(255, 255, 255, 0.05);
-                border-radius: 7px;
+                border-radius: 8px;
             }
             QFrame#PriorityRow:hover {
-                background-color: #182236;
-                border-color: rgba(99, 102, 241, 0.35);
+                background-color: #172134;
+                border-color: rgba(99, 102, 241, 0.4);
             }
             QLabel { background: transparent; border: none; font-family: 'Vazirmatn'; }
         """)
         self.setObjectName("PriorityRow")
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 0, 10, 0)
-        layout.setSpacing(10)
+        layout.setContentsMargins(14, 6, 12, 6)
+        layout.setSpacing(12)
         layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        # شماره ردیف
         lbl_rank = QLabel(to_persian_numbers(rank))
-        lbl_rank.setStyleSheet("font-family: 'Segoe UI'; font-size: 11px; font-weight: 800; color: #64748B; min-width: 18px;")
+        lbl_rank.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_rank.setStyleSheet("""
+            font-family: 'Segoe UI', 'Vazirmatn'; font-size: 11px; font-weight: 800; color: #94A3B8;
+            background-color: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px; min-width: 24px; max-width: 24px; min-height: 24px; max-height: 24px;
+        """)
         layout.addWidget(lbl_rank)
 
-        # بج شیشه‌ای ملایم (Glass Pill Badge)
-        lbl_tag = QLabel(tag)
-        lbl_tag.setStyleSheet(f"""
-            font-size: 9.5px;
-            font-weight: 800;
-            color: {tag_color};
-            background-color: {tag_color}18;
-            border: 1px solid {tag_color}35;
-            border-radius: 4px;
-            padding: 2px 8px;
+        tag_pill = QFrame()
+        tag_pill.setFixedSize(74, 24)
+        tag_pill.setStyleSheet(f"""
+            QFrame {{
+                background-color: transparent;
+                border: 1px solid {tag_style['border']};
+                border-radius: 12px;
+            }}
         """)
-        layout.addWidget(lbl_tag)
+        pill_lay = QHBoxLayout(tag_pill)
+        pill_lay.setContentsMargins(8, 0, 8, 0)
+        pill_lay.setSpacing(6)
+        pill_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # عنوان پروژه یا تسک
+        glow_dot = QFrame()
+        glow_dot.setFixedSize(6, 6)
+        glow_dot.setStyleSheet(f"background-color: {tag_style['dot']}; border-radius: 3px; border: none;")
+        pill_lay.addWidget(glow_dot)
+
+        lbl_tag_text = QLabel(tag)
+        lbl_tag_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_tag_text.setStyleSheet(f"font-size: 10.5px; font-weight: 900; color: {tag_style['text']}; background: transparent; border: none;")
+        pill_lay.addWidget(lbl_tag_text)
+        layout.addWidget(tag_pill)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(1)
+        text_col.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
         lbl_title = QLabel(title)
-        lbl_title.setStyleSheet("font-size: 12px; font-weight: 700; color: #F8FAFC;")
-        layout.addWidget(lbl_title)
+        lbl_title.setStyleSheet("font-size: 12px; font-weight: 800; color: #F8FAFC; border: none;")
+        text_col.addWidget(lbl_title)
 
-        # توضیحات و دلیل اولویت
-        lbl_reason = QLabel(f"({reason})")
-        lbl_reason.setStyleSheet("font-size: 11px; color: #94A3B8;")
-        layout.addWidget(lbl_reason, stretch=1)
+        lbl_reason = QLabel(reason)
+        lbl_reason.setStyleSheet("font-size: 10.5px; color: #94A3B8; border: none;")
+        text_col.addWidget(lbl_reason)
 
-        # دکمه اکشن استاندارد استودیویی CutterLog Pro
-        btn_act = QPushButton(f"{action_label} ←")
-        btn_act.setFixedHeight(28)
+        layout.addLayout(text_col, stretch=1)
+
+        btn_act = QPushButton(action_label)
+        btn_act.setFixedSize(108, 30)
         btn_act.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_act.setStyleSheet("""
             QPushButton {
                 font-family: 'Vazirmatn';
                 font-size: 11px;
                 font-weight: 700;
-                color: #F8FAFC;
-                background-color: #161F30;
+                color: #E2E8F0;
+                background-color: #1A2436;
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 6px;
-                padding: 0 12px;
+                padding: 0;
             }
             QPushButton:hover {
                 background-color: #6366F1;
@@ -417,7 +563,6 @@ class SmartPriorityItemRow(QFrame):
 
 
 class SmartPrioritiesCard(QFrame):
-    """کارت اولویت‌های رتبه‌بندی شده روزانه"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -439,7 +584,7 @@ class SmartPrioritiesCard(QFrame):
         layout.setSpacing(6)
 
         top_row = QHBoxLayout()
-        lbl_t = QLabel("🎯 اولویت‌های رتبه‌بندی‌شده امروز (Smart Action Queue)")
+        lbl_t = QLabel("اولویت‌های رتبه‌بندی‌شده امروز (Smart Action Queue)")
         lbl_t.setStyleSheet("font-size: 12px; font-weight: 800; color: #F8FAFC;")
         top_row.addWidget(lbl_t)
         top_row.addStretch()
@@ -450,7 +595,7 @@ class SmartPrioritiesCard(QFrame):
         layout.addLayout(top_row)
 
         self.items_container = QVBoxLayout()
-        self.items_container.setSpacing(5)
+        self.items_container.setSpacing(6)
         layout.addLayout(self.items_container)
 
     def set_priorities(self, items: List[dict]):
@@ -462,7 +607,7 @@ class SmartPrioritiesCard(QFrame):
         self.lbl_count_tag.setText(f"{to_persian_numbers(len(items))} اقدام فعال")
 
         if not items:
-            lbl_empty = QLabel("هیچ اقدام معوق یا بحرانی برای امروز وجود ندارد؛ همه پروژه‌ها در وضعیت مطلوب هستند ✓")
+            lbl_empty = QLabel("هیچ اقدام معوق یا بحرانی برای امروز وجود ندارد؛ همه پروژه‌ها در وضعیت مطلوب هستند")
             lbl_empty.setStyleSheet("font-size: 11px; color: #10B981; padding: 8px 0;")
             lbl_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.items_container.addWidget(lbl_empty)
@@ -472,13 +617,12 @@ class SmartPrioritiesCard(QFrame):
             row = SmartPriorityItemRow(
                 rank=p["rank"], tag=p["tag"], title=p["title"],
                 reason=p["reason"], action_label=p["action_label"],
-                tag_color=p["color"], on_action_cb=p["callback"], parent=self
+                tag_style=p["tag_style"], on_action_cb=p["callback"], parent=self
             )
             self.items_container.addWidget(row)
 
 
 class ActiveProjectCockpitCard(QFrame):
-    """کارت پروژه در دست انجام با اطلاعات فنی و پیشرفت"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -497,83 +641,134 @@ class ActiveProjectCockpitCard(QFrame):
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(8)
 
         head = QHBoxLayout()
-        lbl_head = QLabel("🎬 پروژه فعال و در جریان تدوین")
-        lbl_head.setStyleSheet("font-size: 12px; font-weight: 800; color: #818CF8;")
+        head.setSpacing(8)
+
+        lbl_head = QLabel("پروژه فعال تدوین")
+        lbl_head.setStyleSheet("font-size: 12.5px; font-weight: 800; color: #818CF8;")
         head.addWidget(lbl_head)
         head.addStretch()
 
-        self.lbl_status = QLabel("● آماده تدوین")
-        self.lbl_status.setStyleSheet("font-size: 10px; font-weight: 700; color: #10B981; background: rgba(16,185,129,0.12); padding: 1px 6px; border-radius: 4px;")
+        self.lbl_status = QLabel("آماده تدوین")
+        self.lbl_status.setStyleSheet("""
+            font-size: 10px; font-weight: 800; color: #10B981;
+            background: rgba(16, 185, 129, 0.12);
+            border: 1px solid rgba(16, 185, 129, 0.25);
+            padding: 2px 8px; border-radius: 4px;
+        """)
         head.addWidget(self.lbl_status)
         layout.addLayout(head)
 
         title_row = QHBoxLayout()
+        title_row.setSpacing(8)
         self.lbl_proj_title = QLabel("پروژه‌ای انتخاب نشده")
-        self.lbl_proj_title.setStyleSheet("font-size: 13px; font-weight: 800; color: #F8FAFC;")
+        self.lbl_proj_title.setStyleSheet("font-size: 13.5px; font-weight: 800; color: #F8FAFC; border: none;")
         title_row.addWidget(self.lbl_proj_title)
 
         self.lbl_studio_name = QLabel("—")
-        self.lbl_studio_name.setStyleSheet("font-size: 11px; color: #94A3B8;")
+        self.lbl_studio_name.setStyleSheet("font-size: 11px; color: #94A3B8; border: none;")
         title_row.addWidget(self.lbl_studio_name)
         title_row.addStretch()
         layout.addLayout(title_row)
 
         meta_grid = QGridLayout()
-        meta_grid.setContentsMargins(0, 0, 0, 0)
+        meta_grid.setContentsMargins(0, 2, 0, 2)
         meta_grid.setHorizontalSpacing(14)
         meta_grid.setVerticalSpacing(4)
 
         self.lbl_deadline = QLabel("موعد تحویل: —")
-        self.lbl_deadline.setStyleSheet("font-size: 10.5px; color: #F59E0B;")
+        self.lbl_deadline.setStyleSheet("font-size: 11px; color: #F59E0B; border: none;")
         meta_grid.addWidget(self.lbl_deadline, 0, 0)
 
         self.lbl_clips_cnt = QLabel("کلیپ‌ها: ۰ از ۰")
-        self.lbl_clips_cnt.setStyleSheet("font-size: 10.5px; color: #94A3B8;")
+        self.lbl_clips_cnt.setStyleSheet("font-size: 11px; color: #94A3B8; border: none;")
         meta_grid.addWidget(self.lbl_clips_cnt, 0, 1)
 
         self.lbl_total_fee = QLabel("قرارداد: ۰ تومان")
-        self.lbl_total_fee.setStyleSheet("font-size: 10.5px; color: #94A3B8;")
+        self.lbl_total_fee.setStyleSheet("font-size: 11px; color: #94A3B8; border: none;")
         meta_grid.addWidget(self.lbl_total_fee, 1, 0)
 
         self.lbl_last_log = QLabel("آخرین رویداد: —")
-        self.lbl_last_log.setStyleSheet("font-size: 10.5px; color: #64748B;")
+        self.lbl_last_log.setStyleSheet("font-size: 11px; color: #64748B; border: none;")
         meta_grid.addWidget(self.lbl_last_log, 1, 1)
 
         layout.addLayout(meta_grid)
 
         pb_row = QHBoxLayout()
-        pb_row.setSpacing(6)
+        pb_row.setSpacing(8)
+        pb_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
         self.pb_proj = QProgressBar()
         self.pb_proj.setRange(0, 100)
         self.pb_proj.setValue(0)
         self.pb_proj.setTextVisible(False)
         self.pb_proj.setFixedHeight(4)
-        self.pb_proj.setStyleSheet("QProgressBar { background: #161F30; border: none; border-radius: 2px; } QProgressBar::chunk { background: #6366F1; border-radius: 2px; }")
+        self.pb_proj.setStyleSheet("""
+            QProgressBar {
+                background: #161F30;
+                border: none;
+                border-radius: 2px;
+            }
+            QProgressBar::chunk {
+                background: #6366F1;
+                border-radius: 2px;
+            }
+        """)
         pb_row.addWidget(self.pb_proj, stretch=1)
 
         self.lbl_pct = QLabel("۰٪")
-        self.lbl_pct.setStyleSheet("font-size: 10.5px; font-weight: bold; color: #818CF8;")
+        self.lbl_pct.setStyleSheet("font-size: 11px; font-weight: 800; color: #818CF8; min-width: 28px; border: none;")
         pb_row.addWidget(self.lbl_pct)
         layout.addLayout(pb_row)
 
         act_row = QHBoxLayout()
-        act_row.setSpacing(6)
+        act_row.setSpacing(8)
 
-        btn_open_folder = QPushButton("پوشه راش‌ها 📁")
+        btn_open_folder = QPushButton("پوشه راش‌ها")
         btn_open_folder.setFixedHeight(28)
         btn_open_folder.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_open_folder.setStyleSheet("background: #161F30; color: #F8FAFC; border: 1px solid rgba(255,255,255,0.08); border-radius: 5px; font-size: 10.5px; padding: 0 8px;")
+        btn_open_folder.setStyleSheet("""
+            QPushButton {
+                font-family: 'Vazirmatn';
+                font-size: 10.5px;
+                font-weight: 700;
+                color: #F8FAFC;
+                background-color: #161F30;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 5px;
+                padding: 0 12px;
+            }
+            QPushButton:hover {
+                background-color: #1E283D;
+                border-color: rgba(255, 255, 255, 0.18);
+            }
+        """)
         btn_open_folder.clicked.connect(self._open_folder)
         act_row.addWidget(btn_open_folder)
 
-        btn_view_proj = QPushButton("پرونده پروژه ←")
+        btn_view_proj = QPushButton("مشاهده پرونده")
         btn_view_proj.setFixedHeight(28)
         btn_view_proj.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_view_proj.setStyleSheet("background: #161F30; color: #818CF8; border: 1px solid rgba(99,102,241,0.3); border-radius: 5px; font-size: 10.5px; padding: 0 10px; font-weight: bold;")
+        btn_view_proj.setStyleSheet("""
+            QPushButton {
+                font-family: 'Vazirmatn';
+                font-size: 10.5px;
+                font-weight: 700;
+                color: #818CF8;
+                background-color: rgba(99, 102, 241, 0.12);
+                border: 1px solid rgba(99, 102, 241, 0.35);
+                border-radius: 5px;
+                padding: 0 14px;
+            }
+            QPushButton:hover {
+                background-color: #6366F1;
+                border-color: #6366F1;
+                color: #FFFFFF;
+            }
+        """)
         btn_view_proj.clicked.connect(self._open_project)
         act_row.addWidget(btn_view_proj)
 
@@ -587,12 +782,21 @@ class ActiveProjectCockpitCard(QFrame):
             self.lbl_studio_name.setText("—")
             self.pb_proj.setValue(0)
             self.lbl_pct.setText("۰٪")
+            self.lbl_status.setText("غیرفعال")
+            self.lbl_status.setStyleSheet("""
+                font-size: 10px; font-weight: 800; color: #64748B;
+                background: rgba(100, 116, 139, 0.12);
+                border: 1px solid rgba(100, 116, 139, 0.25);
+                padding: 2px 8px; border-radius: 4px;
+            """)
             return
 
         self.project_id = p.id
         self.lbl_proj_title.setText(p.couple_names or p.title)
-        s_name = p.client.company if (p.client and p.client.company) else (p.client.full_name if p.client else "استودیوی عمومی")
-        self.lbl_studio_name.setText(f"({s_name})")
+
+        raw_s = p.client.company if (p.client and p.client.company) else (p.client.full_name if p.client else "")
+        s_display = format_studio_title(raw_s) if raw_s else "عمومی"
+        self.lbl_studio_name.setText(f"({s_display})")
 
         c_cnt, t_cnt, pct = ProjectController.calculate_project_progress(p)
         self.pb_proj.setValue(pct)
@@ -604,7 +808,15 @@ class ActiveProjectCockpitCard(QFrame):
         self.lbl_total_fee.setText(f"قرارداد: {format_toman(p.total_fee)}")
 
         s_info = ProjectController.get_status_info(p)
-        self.lbl_status.setText(s_info.get("label", "در حال تدوین"))
+        st_text = s_info.get("label", "در حال تدوین")
+        st_text_clean = st_text.replace("●", "").strip()
+        self.lbl_status.setText(st_text_clean)
+        self.lbl_status.setStyleSheet("""
+            font-size: 10px; font-weight: 800; color: #10B981;
+            background: rgba(16, 185, 129, 0.12);
+            border: 1px solid rgba(16, 185, 129, 0.25);
+            padding: 2px 8px; border-radius: 4px;
+        """)
 
         try:
             with db.get_session() as session:
@@ -636,7 +848,6 @@ class ActiveProjectCockpitCard(QFrame):
 
 
 class TodayInsightsCompactGrid(QFrame):
-    """کارت‌های بینش مدیریتی امروز و یادداشت سریع"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -651,36 +862,32 @@ class TodayInsightsCompactGrid(QFrame):
         """)
         self.setObjectName("InsightsFrame")
         self.init_ui()
+        self.refresh_note_status()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 10, 14, 10)
-        layout.setSpacing(6)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(10)
 
         top_row = QHBoxLayout()
-        lbl_t = QLabel("💡 بینش‌های مدیریتی امروز")
-        lbl_t.setStyleSheet("font-size: 12px; font-weight: 800; color: #10B981;")
+        lbl_t = QLabel("بینش‌های مدیریتی")
+        lbl_t.setStyleSheet("font-size: 12.5px; font-weight: 800; color: #10B981; border: none;")
         top_row.addWidget(lbl_t)
         top_row.addStretch()
 
-        btn_quick_note = QPushButton("+ یادداشت سریع")
-        btn_quick_note.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_quick_note.setStyleSheet("""
-            QPushButton {
-                font-family: 'Vazirmatn'; font-size: 10.5px; font-weight: bold; color: #A5B4FC;
-                background-color: rgba(99, 102, 241, 0.12); border: 1px solid rgba(99, 102, 241, 0.25);
-                border-radius: 5px; padding: 3px 8px;
-            }
-            QPushButton:hover { background-color: #6366F1; color: #FFFFFF; }
-        """)
-        btn_quick_note.clicked.connect(self._open_quick_note_modal)
-        top_row.addWidget(btn_quick_note)
+        # کپسول هوشمند وضعیت یادداشت
+        self.btn_quick_note = QPushButton()
+        self.btn_quick_note.setFixedHeight(26)
+        self.btn_quick_note.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_quick_note.clicked.connect(self._open_quick_note_modal)
+        top_row.addWidget(self.btn_quick_note)
+
         layout.addLayout(top_row)
 
         self.grid = QGridLayout()
         self.grid.setContentsMargins(0, 0, 0, 0)
         self.grid.setHorizontalSpacing(8)
-        self.grid.setVerticalSpacing(6)
+        self.grid.setVerticalSpacing(8)
 
         self.cell_time = self._create_tile("زمان خالص تدوین", "۰:۰۰", "#10B981")
         self.cell_peak = self._create_tile("ساعات اوج سرعت", "۱۶ تا ۱۹", "#818CF8")
@@ -694,48 +901,106 @@ class TodayInsightsCompactGrid(QFrame):
 
         layout.addLayout(self.grid)
 
-    def _create_tile(self, title: str, val: str, col: str) -> dict:
+    def refresh_note_status(self):
+        """بررسی خودکار وضعیت یادداشت و تغییر ظاهر دکمه"""
+        settings = SettingsManager.load_settings()
+        note_text = settings.get("copilot_scratchpad_text", "").strip()
+
+        if note_text:
+            # حالت دارای یادداشت: سبز نئونی با نقطه درخشان و نمایش پیش‌نمایش در تول‌تیپ
+            self.btn_quick_note.setText("● یادداشت فعال")
+            first_line = note_text.split("\n")[0][:45]
+            preview = f"{first_line}..." if len(note_text) > 45 else first_line
+            self.btn_quick_note.setToolTip(f"متن یادداشت:\n{preview}\n(برای مشاهده کامل و ویرایش کلیک کنید)")
+            self.btn_quick_note.setStyleSheet("""
+                QPushButton {
+                    font-family: 'Vazirmatn';
+                    font-size: 10px;
+                    font-weight: 800;
+                    color: #34D399;
+                    background-color: rgba(16, 185, 129, 0.14);
+                    border: 1px solid rgba(16, 185, 129, 0.45);
+                    border-radius: 5px;
+                    padding: 0 10px;
+                }
+                QPushButton:hover {
+                    background-color: #10B981;
+                    color: #FFFFFF;
+                }
+            """)
+        else:
+            # حالت خالی: خاکستری آماده ثبت
+            self.btn_quick_note.setText("+ یادداشت سریع")
+            self.btn_quick_note.setToolTip("میز کار خالی است. برای ثبت یادداشت یا تایم‌کد کلیک کنید.")
+            self.btn_quick_note.setStyleSheet("""
+                QPushButton {
+                    font-family: 'Vazirmatn';
+                    font-size: 10px;
+                    font-weight: 600;
+                    color: #94A3B8;
+                    background-color: #161F30;
+                    border: 1px solid rgba(255, 255, 255, 0.08);
+                    border-radius: 5px;
+                    padding: 0 10px;
+                }
+                QPushButton:hover {
+                    color: #F8FAFC;
+                    border-color: #818CF8;
+                    background-color: #1E283D;
+                }
+            """)
+
+    def _create_tile(self, title: str, val: str, val_color: str) -> dict:
         frame = QFrame()
-        frame.setStyleSheet("background-color: #161F30; border-radius: 6px; border: 1px solid rgba(255,255,255,0.04);")
+        frame.setStyleSheet("""
+            QFrame {
+                background-color: #141B2A;
+                border: none;
+                border-radius: 7px;
+            }
+            QFrame:hover {
+                background-color: #172134;
+            }
+            QLabel {
+                background: transparent;
+                border: none;
+            }
+        """)
         lay = QVBoxLayout(frame)
-        lay.setContentsMargins(10, 6, 10, 6)
-        lay.setSpacing(2)
+        lay.setContentsMargins(8, 10, 8, 10)
+        lay.setSpacing(3)
         lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         lbl_k = QLabel(title)
-        lbl_k.setStyleSheet("font-size: 10px; color: #94A3B8;")
+        lbl_k.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_k.setStyleSheet("font-size: 10px; font-weight: 700; color: #94A3B8; border: none;")
         lay.addWidget(lbl_k)
 
         lbl_v = QLabel(val)
-        lbl_v.setStyleSheet(f"font-size: 12px; font-weight: 800; color: {col};")
+        lbl_v.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_v.setStyleSheet(f"font-size: 13px; font-weight: 800; color: {val_color}; border: none;")
         lay.addWidget(lbl_v)
 
         return {"frame": frame, "val_lbl": lbl_v, "key_lbl": lbl_k}
 
     def _open_quick_note_modal(self):
-        settings = SettingsManager.load_settings()
-        cur_text = settings.get("copilot_scratchpad_text", "")
-        text, ok = StudioInputDialog.get_text(
-            self.window(), "یادداشت سریع میز کار", "تایم‌کدها یا نکات ضروری تدوین:", initial_text=cur_text, placeholder="تایم‌کدها، نام موزیک و..."
-        )
-        if ok:
-            settings["copilot_scratchpad_text"] = text
-            SettingsManager.save_settings(settings)
-            global_signals.show_toast.emit("یادداشت با موفقیت ذخیره شد.", "success")
+        diag = QuickScratchpadDialog(self.window())
+        if diag.exec():
+            self.refresh_note_status()
 
     def update_insights(self, active_hms: str, peak_hours: str, uncollected_toman: str, weekly_summary: str):
         self.cell_time["val_lbl"].setText(to_persian_numbers(active_hms))
         self.cell_peak["val_lbl"].setText(to_persian_numbers(peak_hours))
         self.cell_debts["val_lbl"].setText(uncollected_toman)
         self.cell_pace["val_lbl"].setText(to_persian_numbers(weekly_summary))
+        self.refresh_note_status()
 
 
 class ActivityFeedAndSystemFooter(QFrame):
-    """نوار زیرین ترکیبی رویدادها و وضعیت سخت‌افزار"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        self.setFixedHeight(48)
+        self.setFixedHeight(46)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Fixed)
         self.setStyleSheet("""
             QFrame#FeedFooter {
@@ -754,17 +1019,17 @@ class ActivityFeedAndSystemFooter(QFrame):
         layout.setSpacing(10)
         layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        lbl_icon = QLabel("🕒")
-        lbl_icon.setStyleSheet("font-size: 11px;")
-        layout.addWidget(lbl_icon)
-
         lbl_t = QLabel("آخرین رویدادهای پایپ‌لاین:")
-        lbl_t.setStyleSheet("font-size: 11px; font-weight: bold; color: #64748B;")
+        lbl_t.setStyleSheet("font-size: 11px; font-weight: 800; color: #64748B; border: none;")
         layout.addWidget(lbl_t)
 
-        self.lbl_feed_text = QLabel("در حال دریافت تاریخچه فعالیت‌ها...")
-        self.lbl_feed_text.setStyleSheet("font-size: 11px; color: #CBD5E1;")
-        layout.addWidget(self.lbl_feed_text, stretch=1)
+        self.feed_container = QHBoxLayout()
+        self.feed_container.setSpacing(8)
+        layout.addLayout(self.feed_container, stretch=1)
+
+        self.lbl_empty_feed = QLabel("در حال دریافت تاریخچه فعالیت‌ها...")
+        self.lbl_empty_feed.setStyleSheet("font-size: 11px; color: #94A3B8; border: none;")
+        self.feed_container.addWidget(self.lbl_empty_feed)
 
         div = QFrame()
         div.setFrameShape(QFrame.Shape.VLine)
@@ -772,36 +1037,108 @@ class ActivityFeedAndSystemFooter(QFrame):
         div.setStyleSheet("background-color: rgba(255, 255, 255, 0.06); border: none;")
         layout.addWidget(div)
 
-        self.lbl_sys_status = QLabel("● سیستم پایدار")
-        self.lbl_sys_status.setStyleSheet("font-size: 10px; font-weight: bold; color: #10B981;")
+        self.lbl_sys_status = QLabel("سیستم پایدار")
+        self.lbl_sys_status.setStyleSheet("""
+            font-size: 10px; font-weight: 800; color: #10B981;
+            background: rgba(16, 185, 129, 0.12);
+            border: 1px solid rgba(16, 185, 129, 0.25);
+            border-radius: 4px; padding: 2px 8px;
+        """)
         layout.addWidget(self.lbl_sys_status)
 
-        self.lbl_hw_specs = QLabel("CPU: ۰٪  |  GPU: ۰٪  |  RAM: ۰٪")
-        self.lbl_hw_specs.setStyleSheet("font-family: 'Segoe UI', 'Vazirmatn'; font-size: 10px; color: #94A3B8;")
-        layout.addWidget(self.lbl_hw_specs)
+        hw_box = QHBoxLayout()
+        hw_box.setSpacing(6)
+
+        self.lbl_cpu = self._create_hw_chip("پردازنده", "۰٪", "#818CF8")
+        self.lbl_gpu = self._create_hw_chip("گرافیک", "۰٪", "#38BDF8")
+        self.lbl_ram = self._create_hw_chip("رم", "۰٪", "#F59E0B")
+
+        hw_box.addWidget(self.lbl_cpu["chip"])
+        hw_box.addWidget(self.lbl_gpu["chip"])
+        hw_box.addWidget(self.lbl_ram["chip"])
+        layout.addLayout(hw_box)
+
+    def _create_hw_chip(self, name: str, val: str, col: str) -> dict:
+        chip = QFrame()
+        chip.setFixedWidth(78)
+        chip.setStyleSheet("""
+            QFrame {
+                background-color: #141B2A;
+                border: none;
+                border-radius: 4px;
+            }
+        """)
+        c_lay = QHBoxLayout(chip)
+        c_lay.setContentsMargins(6, 2, 6, 2)
+        c_lay.setSpacing(2)
+        c_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        lbl_n = QLabel(name)
+        lbl_n.setStyleSheet("font-size: 9.5px; font-weight: 700; color: #64748B; border: none;")
+        c_lay.addWidget(lbl_n)
+
+        lbl_v = QLabel(val)
+        lbl_v.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_v.setFixedWidth(32)
+        lbl_v.setStyleSheet(f"font-size: 10px; font-weight: 800; color: {col}; border: none;")
+        c_lay.addWidget(lbl_v)
+
+        return {"chip": chip, "lbl_v": lbl_v}
 
     def set_feed_items(self, items: List[str]):
-        if items:
-            self.lbl_feed_text.setText("   •   ".join(items[:2]))
-        else:
-            self.lbl_feed_text.setText("هنوز رویدادی ثبت نشده است.")
+        while self.feed_container.count():
+            w = self.feed_container.takeAt(0).widget()
+            if w:
+                w.deleteLater()
+
+        if not items:
+            lbl_empty = QLabel("هنوز رویدادی ثبت نشده است")
+            lbl_empty.setStyleSheet("font-size: 11px; color: #94A3B8; border: none;")
+            self.feed_container.addWidget(lbl_empty)
+            return
+
+        for it in items[:2]:
+            pill = QFrame()
+            pill.setStyleSheet("""
+                QFrame {
+                    background-color: #141B2A;
+                    border: none;
+                    border-radius: 4px;
+                }
+            """)
+            p_lay = QHBoxLayout(pill)
+            p_lay.setContentsMargins(8, 2, 8, 2)
+            lbl = QLabel(it)
+            lbl.setStyleSheet("font-size: 10.5px; color: #CBD5E1; border: none;")
+            p_lay.addWidget(lbl)
+            self.feed_container.addWidget(pill)
+
+        self.feed_container.addStretch()
 
     def update_hardware(self, cpu: int, gpu: int, ram: int, is_rendering: bool):
         if is_rendering:
-            self.lbl_sys_status.setText("⚡ رندر فعال")
-            self.lbl_sys_status.setStyleSheet("font-size: 10px; font-weight: bold; color: #38BDF8;")
+            self.lbl_sys_status.setText("رندر فعال")
+            self.lbl_sys_status.setStyleSheet("""
+                font-size: 10px; font-weight: 800; color: #38BDF8;
+                background: rgba(56, 189, 248, 0.12);
+                border: 1px solid rgba(56, 189, 248, 0.25);
+                border-radius: 4px; padding: 2px 8px;
+            """)
         else:
-            self.lbl_sys_status.setText("● سیستم پایدار")
-            self.lbl_sys_status.setStyleSheet("font-size: 10px; font-weight: bold; color: #10B981;")
+            self.lbl_sys_status.setText("سیستم پایدار")
+            self.lbl_sys_status.setStyleSheet("""
+                font-size: 10px; font-weight: 800; color: #10B981;
+                background: rgba(16, 185, 129, 0.12);
+                border: 1px solid rgba(16, 185, 129, 0.25);
+                border-radius: 4px; padding: 2px 8px;
+            """)
 
-        specs_str = f"CPU: {to_persian_numbers(cpu)}٪  |  GPU: {to_persian_numbers(gpu)}٪  |  RAM: {to_persian_numbers(ram)}٪"
-        self.lbl_hw_specs.setText(specs_str)
+        self.lbl_cpu["lbl_v"].setText(f"{to_persian_numbers(cpu)}٪")
+        self.lbl_gpu["lbl_v"].setText(f"{to_persian_numbers(gpu)}٪")
+        self.lbl_ram["lbl_v"].setText(f"{to_persian_numbers(ram)}٪")
 
 
 class CopilotView(QWidget):
-    """
-    نمای مدرن و بازطراحی‌شده مرکز فرماندهی هوشمند تدوین (Smart Command Center)
-    """
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -828,23 +1165,18 @@ class CopilotView(QWidget):
         self.layout.setSpacing(10)
         self.layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        # ۱. Header
         self.header_bar = CommandHeaderBar(self)
         self.layout.addWidget(self.header_bar)
 
-        # ۲. Today Status & KPIs
         self.overview_bar = TodayOverviewBar(self)
         self.layout.addWidget(self.overview_bar)
 
-        # ۳. Main Copilot Command Center
         self.main_copilot = MainCopilotDecisionCard(self)
         self.layout.addWidget(self.main_copilot)
 
-        # ۴. Priorities / Action Queue
         self.priorities_card = SmartPrioritiesCard(self)
         self.layout.addWidget(self.priorities_card)
 
-        # ۵. Dual Section: Active Project + Today Insights
         mid_grid = QHBoxLayout()
         mid_grid.setSpacing(10)
 
@@ -856,7 +1188,6 @@ class CopilotView(QWidget):
 
         self.layout.addLayout(mid_grid)
 
-        # ۶. Bottom Activity Feed & System Mini Status
         self.feed_footer = ActivityFeedAndSystemFooter(self)
         self.layout.addWidget(self.feed_footer)
 
@@ -889,7 +1220,7 @@ class CopilotView(QWidget):
 
     def refresh_data(self):
         settings = SettingsManager.load_settings()
-        editor_name = settings.get("editor_name") or "تدوین‌گر"
+        editor_name = settings.get("editor_name") or "میلاد"
 
         prod = CopilotEngine.get_productivity_insights(days_back=14)
         radar = CopilotEngine.get_pipeline_radar()
@@ -918,9 +1249,8 @@ class CopilotView(QWidget):
         time_str = f"{t_h:02d}:{t_m:02d}"
 
         risks_cnt = radar.get("total_risks_count", 0)
-        attention_text = f"امروز {to_persian_numbers(risks_cnt)} موضوع نیازمند توجه است." if risks_cnt > 0 else "پایپ‌لاین در سلامت کامل و بدون ریسک قرار دارد ✓"
+        attention_text = f"امروز {to_persian_numbers(risks_cnt)} موضوع نیازمند توجه است." if risks_cnt > 0 else "پایپ‌لاین در سلامت کامل و بدون ریسک قرار دارد"
 
-        # ۱. بروزرسانی نوار بالایی
         self.overview_bar.update_metrics(
             editor_name=editor_name,
             attention_text=attention_text,
@@ -930,7 +1260,6 @@ class CopilotView(QWidget):
             tasks_cnt=risks_cnt
         )
 
-        # ۲. تصمیم‌گیری مغز اصلی Copilot
         if rec_proj:
             insight = f"پروژه «{rec_proj['title']}» آماده شروع تدوین است؛ {rec_proj['recommendation_reason']}."
             why_list = [
@@ -947,23 +1276,40 @@ class CopilotView(QWidget):
                 ["هیچ اصلاحیه بازی ثبت نشده است", "تمامی راش‌های اولیه تدوین شده‌اند"]
             )
 
-        # ۳. ساخت صف اولویت‌های هوشمند با بج‌های ملایم و دکمه‌های تم استودیو
         p_list = []
         rank_idx = 1
+
+        tag_styles = {
+            "urgent": {
+                "border": "rgba(255, 59, 105, 0.6)",
+                "text": "#FF3B69",
+                "dot": "#FF2A55"
+            },
+            "edit": {
+                "border": "rgba(251, 191, 36, 0.6)",
+                "text": "#FBBF24",
+                "dot": "#F59E0B"
+            },
+            "finance": {
+                "border": "rgba(52, 211, 153, 0.6)",
+                "text": "#34D399",
+                "dot": "#10B981"
+            }
+        }
 
         if radar.get("urgent_deadlines"):
             u = radar["urgent_deadlines"][0]
             p_list.append({
                 "rank": f"{rank_idx:02d}", "tag": "فوری", "title": f"ددلاین «{u['title']}»",
-                "reason": u["warning"], "action_label": "مشاهده پروژه", "color": "#EF4444",
+                "reason": u["warning"], "action_label": "مشاهده پروژه", "tag_style": tag_styles["urgent"],
                 "callback": lambda pid=u["id"]: global_signals.navigate_and_focus_project.emit(pid)
             })
             rank_idx += 1
 
         if rec_proj:
             p_list.append({
-                "rank": f"{rank_idx:02d}", "tag": "مهم", "title": f"ادامه تدوین «{rec_proj['title']}»",
-                "reason": rec_proj["recommendation_reason"], "action_label": "شروع کات", "color": "#F59E0B",
+                "rank": f"{rank_idx:02d}", "tag": "تدوین", "title": f"ادامه راش‌های «{rec_proj['title']}»",
+                "reason": rec_proj["recommendation_reason"], "action_label": "شروع کات", "tag_style": tag_styles["edit"],
                 "callback": lambda pid=rec_proj["project_id"]: global_signals.navigate_and_focus_project.emit(pid)
             })
             rank_idx += 1
@@ -971,24 +1317,22 @@ class CopilotView(QWidget):
         if total_remaining > 0 and scores:
             bad_client = scores[0]
             p_list.append({
-                "rank": f"{rank_idx:02d}", "tag": "پیگیری مالی", "title": f"تسویه مطالبات {bad_client['studio_name']}",
-                "reason": f"مانده حساب: {format_toman(bad_client['remaining'])}", "action_label": "دفتر مالی", "color": "#10B981",
+                "rank": f"{rank_idx:02d}", "tag": "مالی", "title": f"تسویه مطالبات {bad_client['studio_name']}",
+                "reason": f"مانده حساب: {format_toman(bad_client['remaining'])}", "action_label": "دفتر مالی", "tag_style": tag_styles["finance"],
                 "callback": lambda: global_signals.navigate_to_page.emit(3)
             })
             rank_idx += 1
 
         self.priorities_card.set_priorities(p_list)
 
-        # ۴. پروژه در دست انجام
         if active_projects:
             active_p = active_projects[0]
             self.cockpit_card.set_project_data(active_p)
         else:
             self.cockpit_card.set_project_data(None)
 
-        # ۵. بینش‌های فشرده مدیریتی
         peak = prod.get("golden_hours_label", "۱۶ تا ۱۹")
-        debt_str = format_toman(total_remaining) if total_remaining > 0 else "حساب‌ها تسویه ✓"
+        debt_str = format_toman(total_remaining) if total_remaining > 0 else "حساب‌ها تسویه شده"
         self.insights_grid.update_insights(
             active_hms=f"{t_h} ساعت و {t_m} دقیقه",
             peak_hours=peak,
@@ -996,14 +1340,13 @@ class CopilotView(QWidget):
             weekly_summary="۳۶ ساعت هفتگی"
         )
 
-        # ۶. لاگ‌های اخیر فعالیت
         try:
             with db.get_session() as session:
                 logs = session.scalars(select(ProjectEventLog).order_by(ProjectEventLog.created_at.desc()).limit(3)).all()
                 feed_items = []
                 for l in logs:
                     t_str = l.created_at.strftime("%H:%M") if l.created_at else "--:--"
-                    feed_items.append(f"{to_persian_numbers(t_str)} {l.title}")
+                    feed_items.append(f"{to_persian_numbers(t_str)} • {l.title}")
                 self.feed_footer.set_feed_items(feed_items)
         except Exception:
             self.feed_footer.set_feed_items([])

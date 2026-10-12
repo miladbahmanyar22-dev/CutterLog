@@ -16,7 +16,7 @@ from widgets.copilot_briefing_card import CopilotBriefingCard
 
 from core.finance_controller import FinanceController
 from core.project_controller import ProjectController
-from core.persian_utils import to_persian_numbers
+from core.persian_utils import to_persian_numbers, format_studio_title
 from core.signals import global_signals
 
 
@@ -33,7 +33,6 @@ class DashboardView(QWidget):
         main_layout.setContentsMargins(28, 18, 28, 16)
         main_layout.setSpacing(14)
 
-        # ۱. سطر ترکیبی اول: خوش‌آمدگویی/ساعت (راست) + دستیار هوشمند خلاصه (چپ)
         top_bar_row = QHBoxLayout()
         top_bar_row.setSpacing(14)
 
@@ -41,17 +40,14 @@ class DashboardView(QWidget):
         top_bar_row.addWidget(self.welcome_header, stretch=3)
 
         self.copilot_card = CopilotBriefingCard(self)
-        # هدایت مستقیم به صفحه کامل دستیار هوشمند (ایندکس ۷)
         self.copilot_card.open_insights_requested.connect(lambda: global_signals.navigate_to_page.emit(7))
         top_bar_row.addWidget(self.copilot_card, stretch=2)
 
         main_layout.addLayout(top_bar_row)
 
-        # ۲. کارت آنالیزور سریع فوتج (Media Inspector)
         self.media_drop_zone = MediaInspectorDropZone(self)
         main_layout.addWidget(self.media_drop_zone)
 
-        # ۳. کارت‌های شاخص آماری (KPIs)
         self.stats_layout = QHBoxLayout()
         self.stats_layout.setSpacing(10)
 
@@ -66,7 +62,6 @@ class DashboardView(QWidget):
         self.stats_layout.addWidget(self.card_reviews)
         main_layout.addLayout(self.stats_layout)
 
-        # ۴. کانتینر اسکرول محتوای پروژه‌ها
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
@@ -209,12 +204,15 @@ class DashboardView(QWidget):
                 for c in p.clips
             ]
 
+            raw_client = p.client.company if (p.client and p.client.company) else (p.client.full_name if p.client else "")
+            client_display = format_studio_title(raw_client) if raw_client else "بدون استودیو"
+
             p_dict = {
                 "id": p.id,
                 "project_number": p.project_number or p.id,
                 "couple_names": p.couple_names,
                 "title": p.title,
-                "client_name": p.client.company if (p.client and p.client.company) else (p.client.full_name if p.client else "بدون استودیو"),
+                "client_name": client_display,
                 "current_stage": p.current_stage.value if hasattr(p.current_stage, "value") else str(p.current_stage),
                 "deadline": p.deadline,
                 "event_date": p.event_date,

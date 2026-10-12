@@ -5,11 +5,12 @@ from pathlib import Path
 from datetime import datetime
 from PySide6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, 
-    QPushButton, QMenu, QWidget, QSizePolicy
+    QPushButton, QWidget, QSizePolicy
 )
 from PySide6.QtCore import Qt, QSize, QTimer
 
-from core.persian_utils import format_toman, gregorian_to_jalali, to_persian_numbers
+from config import open_path_in_os
+from core.persian_utils import format_toman, gregorian_to_jalali, to_persian_numbers, clean_studio_display_name
 from core.project_controller import ProjectController
 from core.finance_controller import FinanceController
 from core.nle_messenger_helper import NleLauncherHelper
@@ -20,42 +21,32 @@ from widgets.edit_project_dialog import EditProjectDialog
 from widgets.new_transaction_dialog import NewTransactionDialog
 from widgets.project_timeline import NewRevisionDialog
 from widgets.dynamic_clip_bar import DynamicClipOverviewBar
-from widgets.project_media_explorer_dialog import ProjectMediaExplorerDialog
 from widgets.studio_share_dialog import StudioShareDialog
 from widgets.quick_messenger_popup import QuickMessengerMiniPopup
 from widgets.studio_dialog_base import StudioBaseDialog, StudioConfirmDialog
-from core.icon_provider import IconProvider
+from widgets.studio_menu import StudioMenu
 from core.signals import global_signals
+from core.icon_provider import IconProvider
 
 
-def progress_pct_to_words(pct: int, completed_clips: int, total_clips: int) -> str:
-    if total_clips == 0:
-        return "بدون کلیپ"
-    if completed_clips == 0:
-        return "شروع نشده"
-    if pct >= 100 or completed_clips == total_clips:
-        return "تکمیل شده"
-
-    ones = ["", "یک", "دو", "سه", "چهار", "پنج", "شش", "هفت", "هشت", "نه"]
-    teens = ["ده", "یازده", "دوازده", "سیزده", "چهارده", "پانزده", "شانزده", "هفده", "هجده", "نوزده"]
-    tens = ["", "", "بیست", "سی", "چهل", "پنجاه", "شصت", "هفتاد", "هشتاد", "نود"]
-
-    def _num_to_text(n: int) -> str:
-        if n <= 0:
-            return "صفر"
-        if n < 10:
-            return ones[n]
-        if n < 20:
-            return teens[n - 10]
-        if n < 100:
-            t = n // 10
-            o = n % 10
-            if o > 0:
-                return f"{tens[t]} و {ones[o]}"
-            return tens[t]
-        return "صد"
-
-    return f"{_num_to_text(pct)} درصد انجام شده"
+def get_persian_nle_name(file_path: str) -> str:
+    """تشخیص نرم‌افزار تدوین و بازگردانی نام ۱۰۰٪ فارسی"""
+    if not file_path:
+        return "پروژه تدوین"
+    p = Path(file_path)
+    ext = p.suffix.replace(".", "").upper()
+    nle_names = {
+        "PRPROJ": "پریمیر",
+        "DRP": "داوینچی",
+        "AEP": "افتر افکت",
+        "FCPXML": "فاینال کات",
+        "XML": "تایم‌لاین XML",
+        "EDL": "فایل EDL",
+        "PSD": "فتوشاپ",
+        "SESX": "آدیشن",
+        "CPR": "کیوبیس"
+    }
+    return nle_names.get(ext, f"پروژه {ext}")
 
 
 class ArchiveConfirmDialog(StudioBaseDialog):
@@ -98,7 +89,7 @@ class ArchiveConfirmDialog(StudioBaseDialog):
         btn_box = QHBoxLayout()
         btn_box.setSpacing(8)
 
-        btn_confirm = QPushButton("✓ تأیید و انتقال به آرشیو")
+        btn_confirm = QPushButton("تأیید و انتقال به آرشیو")
         btn_confirm.setFixedHeight(36)
         btn_confirm.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_confirm.setStyleSheet("""
@@ -154,34 +145,36 @@ class ProjectCard(BaseProjectCard):
         )
         self.project = project_data
         self.is_overdue = False
-        self.setFixedHeight(230)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setFixedHeight(236)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Fixed)
         self.init_card_content()
 
+    def _apply_base_styles(self):
+        self._apply_card_theme()
+
     def _apply_card_theme(self):
-        """اعمال تم رنگی اختصاصی در صورت تأخیر در تحویل یا تم استاندارد"""
         if self.is_overdue:
             self.setStyleSheet("""
                 QFrame#BaseCardFrame {
-                    background-color: rgba(239, 68, 68, 0.06);
-                    border: 1.5px solid rgba(239, 68, 68, 0.38);
+                    background-color: #14111E;
+                    border: 1.5px solid rgba(239, 68, 68, 0.40);
                     border-radius: 12px;
                 }
                 QFrame#BaseCardFrame:hover {
-                    background-color: rgba(239, 68, 68, 0.10);
-                    border: 1.5px solid #EF4444;
+                    border-color: #EF4444;
+                    background-color: #181324;
                 }
             """)
         else:
             self.setStyleSheet("""
                 QFrame#BaseCardFrame {
-                    background-color: #121826;
+                    background-color: #0E1322;
                     border: 1px solid rgba(255, 255, 255, 0.06);
                     border-radius: 12px;
                 }
                 QFrame#BaseCardFrame:hover {
-                    background-color: #161F30;
-                    border: 1px solid rgba(99, 102, 241, 0.40);
+                    background-color: #12182B;
+                    border: 1px solid rgba(99, 102, 241, 0.45);
                 }
             """)
 
@@ -191,71 +184,75 @@ class ProjectCard(BaseProjectCard):
         c_cnt = self.project.get("completed_clips", 0)
         t_cnt = self.project.get("total_clips", 0)
 
-        # ۱. ارزیابی هوشمند عبور از ددلاین (Deadline Overdue)
         self.is_overdue = False
-        if self.project.get("deadline"):
+        deadline_dt = self.project.get("deadline")
+        if deadline_dt:
             now_dt = datetime.utcnow()
-            d_dt = self.project.get("deadline")
-            if isinstance(d_dt, datetime) and (d_dt.date() - now_dt.date()).days < 0 and prog_val < 100:
+            if isinstance(deadline_dt, datetime) and (deadline_dt.date() - now_dt.date()).days < 0 and prog_val < 100:
                 self.is_overdue = True
 
         self._apply_card_theme()
 
+        # وضعیت و بج کپسولی
         if self.is_overdue:
-            status_text = "ددلاین گذشته"
+            status_text = "ددلاین گذشته ⚠️"
             status_type = StatusType.DANGER
             status_symbol = "!"
         elif active_rev:
             prog_val = self.project.get("rev_progress_pct", 0)
-            c_cnt = self.project.get("rev_completed_tasks", 0)
-            t_cnt = self.project.get("rev_total_tasks", 0)
-            status_text = f"اصلاحیه: {progress_pct_to_words(prog_val, c_cnt, t_cnt)}"
+            status_text = f"اصلاحیه: {to_persian_numbers(prog_val)}٪"
             status_type = StatusType.WARNING
             status_symbol = "●"
         else:
             status_info = self.project.get("status_info", {})
             status_key = status_info.get("key", "")
-            
             if status_key == "under_review":
-                status_text = status_info.get("label", "تحویل شد / منتظر بازبینی")
+                status_text = "تحویل شد / منتظر بازبینی"
                 status_type = StatusType.PENDING
                 status_symbol = "⏳"
+            elif prog_val >= 100 or (t_cnt > 0 and c_cnt == t_cnt):
+                status_text = "آماده تحویل ✓"
+                status_type = StatusType.COMPLETED
+                status_symbol = "✓"
+            elif c_cnt == 0:
+                status_text = "در انتظار شروع"
+                status_type = StatusType.NEUTRAL
+                status_symbol = "○"
             else:
-                status_text = progress_pct_to_words(prog_val, c_cnt, t_cnt)
-                if prog_val >= 100 or (t_cnt > 0 and c_cnt == t_cnt):
-                    status_type = StatusType.COMPLETED
-                    status_symbol = "✓"
-                elif c_cnt == 0:
-                    status_type = StatusType.NEUTRAL
-                    status_symbol = "○"
-                else:
-                    status_type = StatusType.ACTIVE
-                    status_symbol = "●"
+                status_text = f"پیشرفت: {to_persian_numbers(prog_val)}٪"
+                status_type = StatusType.ACTIVE
+                status_symbol = "●"
 
-        self.status_badge = StatusPillBadge(
-            label=status_text,
-            status_type=status_type,
-            custom_symbol=status_symbol
-        )
+        self.status_badge = StatusPillBadge(label=status_text, status_type=status_type, custom_symbol=status_symbol)
         self.header_tags_layout.addWidget(self.status_badge)
 
+        # بج وضعیت مالی
         rem_amount = self.project.get("remaining_amount", 0)
         is_settled = (rem_amount == 0) and (self.project.get("total_fee", 0) > 0)
-        fin_label = "✓ تسویه کامل" if is_settled else f"مانده: {format_toman(rem_amount)}"
-        fin_color = "#10B981" if is_settled else "#F59E0B"
+        
+        if is_settled:
+            fin_label = "تسویه کامل ✓"
+            fin_bg = "rgba(16, 185, 129, 0.16)"
+            fin_color = "#34D399"
+            fin_border = "rgba(16, 185, 129, 0.35)"
+        else:
+            fin_label = f"مانده: {format_toman(rem_amount)}"
+            fin_bg = "rgba(251, 146, 60, 0.16)"
+            fin_color = "#FB923C"
+            fin_border = "rgba(251, 146, 60, 0.40)"
         
         badge_fin = QLabel(fin_label)
         badge_fin.setFixedHeight(24)
         badge_fin.setStyleSheet(f"""
             QLabel {{
                 font-family: 'Vazirmatn';
-                background-color: {fin_color}14;
+                background-color: {fin_bg};
                 color: {fin_color};
-                border: 1px solid {fin_color}33;
+                border: 1px solid {fin_border};
                 border-radius: 6px;
-                padding: 0 8px;
+                padding: 0 10px;
                 font-size: 11px;
-                font-weight: 600;
+                font-weight: 800;
             }}
         """)
         self.header_tags_layout.addWidget(badge_fin)
@@ -274,169 +271,141 @@ class ProjectCard(BaseProjectCard):
             }
             QPushButton:hover {
                 color: #F8FAFC;
-                background-color: rgba(255, 255, 255, 0.06);
+                background-color: rgba(255, 255, 255, 0.08);
                 border-radius: 4px;
             }
         """)
         btn_more.clicked.connect(lambda: self._show_context_menu(btn_more))
         self.header_layout.addWidget(btn_more)
 
+        # عنوان و استودیو
         title_box = QVBoxLayout()
         title_box.setSpacing(2)
-        title_box.setContentsMargins(0, 4, 0, 2)
+        title_box.setContentsMargins(0, 2, 0, 2)
         
-        couple_name = self.project.get("couple_names") or self.project.get("title", "پروژه بدون نام")
+        couple_name = self.project.get("couple_names") or self.project.get("title", "پروژه")
         lbl_title = QLabel(couple_name)
-        lbl_title.setWordWrap(True)
-        lbl_title.setStyleSheet("font-family: 'Vazirmatn'; font-size: 15px; font-weight: 800; color: #F8FAFC; border: none; background: transparent; padding: 2px 0;")
+        lbl_title.setStyleSheet("font-family: 'Vazirmatn'; font-size: 14.5px; font-weight: 900; color: #F8FAFC; border: none; background: transparent;")
         title_box.addWidget(lbl_title)
 
-        client_name = self.project.get("client_name") or "بدون استودیو"
-        lbl_client = QLabel(f"استودیو: {client_name}")
-        lbl_client.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11.5px; color: #94A3B8; font-weight: 500; border: none; background: transparent;")
+        raw_client = self.project.get("client_name") or "بدون استودیو"
+        client_display = clean_studio_display_name(raw_client)
+        lbl_client = QLabel(f"استودیو: <span style='color:#38BDF8;'>{client_display}</span>")
+        lbl_client.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11px; color: #94A3B8; font-weight: 600; border: none; background: transparent;")
         title_box.addWidget(lbl_client)
 
         self.card_layout.addLayout(title_box)
 
-        if active_rev:
-            c_cnt = self.project.get("rev_completed_tasks", 0)
-            t_cnt = self.project.get("rev_total_tasks", 0)
-            lbl_text = f"تسک‌های اصلاحیه: {to_persian_numbers(c_cnt)} از {to_persian_numbers(t_cnt)}"
-            p_color = "#EA580C"
-        else:
-            c_cnt = self.project.get("completed_clips", 0)
-            t_cnt = self.project.get("total_clips", 0)
-            lbl_text = f"کلیپ‌های مراسم: {to_persian_numbers(c_cnt)} از {to_persian_numbers(t_cnt)}"
-            p_color = "#10B981" if prog_val == 100 else ("#EF4444" if self.is_overdue else "#6366F1")
-
-        prog_row = QHBoxLayout()
-        prog_row.setContentsMargins(0, 2, 0, 0)
-        
-        lbl_clips_cnt = QLabel(lbl_text)
-        lbl_clips_cnt.setStyleSheet("font-family: 'Vazirmatn'; color: #8F909D; font-size: 11px; border: none; background: transparent;")
-        prog_row.addWidget(lbl_clips_cnt, stretch=1)
-        
-        lbl_pct_val = QLabel(f"{to_persian_numbers(prog_val)}٪")
-        lbl_pct_val.setStyleSheet(f"font-family: 'Vazirmatn'; color: {p_color}; font-size: 11.5px; font-weight: 800; border: none; background: transparent;")
-        prog_row.addWidget(lbl_pct_val)
-        self.card_layout.addLayout(prog_row)
-
+        # نوار داینامیک کلیپ‌ها
         clips_data = self.project.get("clips_list", [])
         self.clip_bar = DynamicClipOverviewBar(clips_data=clips_data, parent=self)
         self.card_layout.addWidget(self.clip_bar)
 
-        info_bg = "rgba(239, 68, 68, 0.08)" if self.is_overdue else "#0F1420"
-        info_border = "rgba(239, 68, 68, 0.20)" if self.is_overdue else "rgba(255, 255, 255, 0.04)"
+        # باکس اطلاعات مالی و تاریخ
         info_frame = QFrame()
-        info_frame.setStyleSheet(f"""
-            QFrame {{
-                background-color: {info_bg};
-                border: 1px solid {info_border};
+        info_frame.setStyleSheet("""
+            QFrame {
+                background-color: #0A0E18;
+                border: 1px solid rgba(255, 255, 255, 0.04);
                 border-radius: 7px;
-            }}
-            QLabel {{
+            }
+            QLabel {
                 border: none;
                 background: transparent;
-            }}
+            }
         """)
         info_layout = QHBoxLayout(info_frame)
-        info_layout.setContentsMargins(10, 6, 10, 6)
+        info_layout.setContentsMargins(10, 5, 10, 5)
         info_layout.setSpacing(10)
 
         fee_str = format_toman(self.project.get("total_fee", 0))
         event_str = gregorian_to_jalali(self.project.get("event_date")) or "-"
         dead_str = gregorian_to_jalali(self.project.get("deadline")) or "-"
 
-        lbl_fee = QLabel(f"کل: <b style='color:#F8FAFC;'>{fee_str}</b>")
-        lbl_fee.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11px; color: #8F909D;")
+        lbl_fee = QLabel(f"قرارداد: <b style='color:#F8FAFC;'>{fee_str}</b>")
+        lbl_fee.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11px; color: #94A3B8;")
         info_layout.addWidget(lbl_fee)
 
         info_layout.addStretch()
 
-        lbl_event = QLabel(f"مراسم: {event_str}")
-        lbl_event.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11px; color: #818CF8;")
+        lbl_event = QLabel(f"مراسم: <b style='color:#818CF8;'>{event_str}</b>")
+        lbl_event.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11px; color: #94A3B8;")
         info_layout.addWidget(lbl_event)
 
-        dead_color = "#EF4444" if self.is_overdue else "#64748B"
-        lbl_dead = QLabel(f"تحویل: {dead_str}")
-        lbl_dead.setStyleSheet(f"font-family: 'Vazirmatn'; font-size: 11px; color: {dead_color}; font-weight: {'700' if self.is_overdue else 'normal'};")
+        dead_color = "#EF4444" if self.is_overdue else "#FBBF24"
+        lbl_dead = QLabel(f"تحویل: <b style='color:{dead_color};'>{dead_str}</b>")
+        lbl_dead.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11px; color: #94A3B8;")
         info_layout.addWidget(lbl_dead)
 
         self.card_layout.addWidget(info_frame)
 
+        # نوار ابزار دکمه‌های پایین
         foot_row = QHBoxLayout()
         foot_row.setContentsMargins(0, 2, 0, 0)
-        foot_row.setSpacing(5)
+        foot_row.setSpacing(6)
 
         has_path = bool(self.project.get("primary_path") and Path(self.project.get("primary_path")).exists())
-        drive_color = "#10B981" if has_path else "#EF4444"
+        drive_border = "#10B981" if has_path else "#EF4444"
 
-        btn_folder = QPushButton("پوشه")
-        btn_folder.setIcon(IconProvider.get_icon("folder", drive_color, size=13))
-        btn_folder.setIconSize(QSize(13, 13))
+        btn_folder = QPushButton("پوشه راش‌ها")
         btn_folder.setCursor(Qt.CursorShape.PointingHandCursor if has_path else Qt.CursorShape.ForbiddenCursor)
         btn_folder.setStyleSheet(f"""
             QPushButton {{
                 font-family: 'Vazirmatn';
-                background-color: #161F30;
+                background-color: #141B2D;
                 color: #F8FAFC;
-                border: 1px solid {drive_color}33;
+                border: 1px solid {drive_border}40;
                 border-radius: 6px;
-                padding: 4px 8px;
+                padding: 4px 10px;
                 font-size: 11px;
-                font-weight: 500;
+                font-weight: 600;
             }}
             QPushButton:hover {{
-                border-color: {drive_color};
-                background-color: #1E283D;
+                border-color: {drive_border};
+                background-color: #1A243D;
             }}
         """)
         btn_folder.clicked.connect(self._open_folder)
         foot_row.addWidget(btn_folder)
 
+        # دکمه اجرای NLE
         nle_path = self.project.get("nle_project_path", "")
-        badge_info = NleLauncherHelper.get_file_badge_info(nle_path)
-        b_label = badge_info["label"]
-        has_nle_file = badge_info["has_file"]
+        persian_nle = get_persian_nle_name(nle_path)
+        has_nle_file = bool(nle_path and Path(nle_path).exists())
 
-        btn_nle = QPushButton(b_label)
-        btn_nle.setIcon(IconProvider.get_icon("nle_launch", "#818CF8" if has_nle_file else "#64748B", size=13))
-        btn_nle.setIconSize(QSize(13, 13))
+        btn_nle = QPushButton(persian_nle)
         btn_nle.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_nle.setToolTip(f"اجرای مستقیم در {badge_info['name']}\n{nle_path}" if has_nle_file else "فایل پروژه متصل نشده است")
-        btn_nle.setStyleSheet("""
-            QPushButton {
-                font-family: 'Segoe UI', 'Vazirmatn', sans-serif;
-                background-color: #161F30;
-                color: #F8FAFC;
-                border: 1px solid rgba(99, 102, 241, 0.35);
+        btn_nle.setToolTip(f"اجرای پروژه در {persian_nle}\n{nle_path}" if has_nle_file else "فایل پروژه تدوین متصل نشده است")
+        btn_nle.setStyleSheet(f"""
+            QPushButton {{
+                font-family: 'Vazirmatn';
+                background-color: #141B2D;
+                color: {'#C7D2FE' if has_nle_file else '#64748B'};
+                border: 1px solid {'rgba(99, 102, 241, 0.4)' if has_nle_file else 'rgba(255, 255, 255, 0.08)'};
                 border-radius: 6px;
-                padding: 4px 9px;
+                padding: 4px 10px;
                 font-size: 11px;
                 font-weight: 700;
-            }
-            QPushButton:hover {
+            }}
+            QPushButton:hover {{
                 border-color: #818CF8;
-                background-color: #1E283D;
-                color: #818CF8;
-            }
+                background-color: #1D253E;
+                color: #FFFFFF;
+            }}
         """)
         btn_nle.clicked.connect(self._launch_nle_project)
         foot_row.addWidget(btn_nle)
 
-        btn_msg = QPushButton("پیام")
-        btn_msg.setIcon(IconProvider.get_icon("message", "#38BDF8", size=12))
-        btn_msg.setIconSize(QSize(12, 12))
+        btn_msg = QPushButton("ارسال پیام")
         btn_msg.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_msg.setToolTip("کپی پیام وضعیت و ارسال سریع در تلگرام یا واتساپ")
         btn_msg.setStyleSheet("""
             QPushButton {
                 font-family: 'Vazirmatn';
-                background-color: rgba(56, 189, 248, 0.10);
+                background-color: rgba(56, 189, 248, 0.12);
                 color: #38BDF8;
-                border: 1px solid rgba(56, 189, 248, 0.25);
+                border: 1px solid rgba(56, 189, 248, 0.3);
                 border-radius: 6px;
-                padding: 4px 8px;
+                padding: 4px 10px;
                 font-size: 11px;
                 font-weight: 600;
             }
@@ -448,89 +417,47 @@ class ProjectCard(BaseProjectCard):
         btn_msg.clicked.connect(lambda: self._open_fast_messenger_popup(btn_msg))
         foot_row.addWidget(btn_msg)
 
-        btn_add_rev = QPushButton("+ اصلاحیه")
-        btn_add_rev.setIcon(IconProvider.get_icon("revision", "#EA580C", size=12))
-        btn_add_rev.setIconSize(QSize(12, 12))
+        btn_add_rev = QPushButton("ثبت اصلاحیه")
         btn_add_rev.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_add_rev.setStyleSheet("""
             QPushButton {
                 font-family: 'Vazirmatn';
-                background-color: rgba(234, 88, 12, 0.10);
-                color: #EA580C;
-                border: 1px solid rgba(234, 88, 12, 0.25);
+                background-color: rgba(249, 115, 22, 0.12);
+                color: #FB923C;
+                border: 1px solid rgba(249, 115, 22, 0.3);
                 border-radius: 6px;
-                padding: 4px 8px;
+                padding: 4px 10px;
                 font-size: 11px;
-                font-weight: 600;
+                font-weight: 700;
             }
-            QPushButton:hover { background-color: #EA580C; color: #FFFFFF; }
+            QPushButton:hover {
+                background-color: #EA580C;
+                color: #FFFFFF;
+            }
         """)
         btn_add_rev.clicked.connect(self._open_new_revision)
         foot_row.addWidget(btn_add_rev)
 
-        project_obj = ProjectController.get_project_by_id(self.project_id)
-        is_eligible_for_finance = FinanceController.is_project_eligible_for_finance(project_obj) if project_obj else False
-
-        if is_eligible_for_finance:
-            btn_pay = QPushButton("واریزی")
-            btn_pay.setIcon(IconProvider.get_icon("dollar", "#10B981", size=12))
-            btn_pay.setIconSize(QSize(12, 12))
-            btn_pay.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn_pay.setStyleSheet("""
-                QPushButton {
-                    font-family: 'Vazirmatn';
-                    background-color: rgba(16, 185, 129, 0.10);
-                    color: #10B981;
-                    border: 1px solid rgba(16, 185, 129, 0.25);
-                    border-radius: 6px;
-                    padding: 4px 8px;
-                    font-size: 11px;
-                    font-weight: 600;
-                }
-                QPushButton:hover { background-color: #10B981; color: #FFFFFF; }
-            """)
-            btn_pay.clicked.connect(self._open_payment)
-            foot_row.addWidget(btn_pay)
-
-        status_info = self.project.get("status_info", {})
-        status_key = status_info.get("key", "")
-        if prog_val >= 100:
-            if status_key == "ready_for_delivery":
-                btn_deliver = QPushButton("تحویل به آتلیه 📤")
-                btn_deliver.setCursor(Qt.CursorShape.PointingHandCursor)
-                btn_deliver.setStyleSheet("""
-                    QPushButton {
-                        font-family: 'Vazirmatn';
-                        background-color: #0891B2;
-                        color: #FFFFFF;
-                        border: none;
-                        border-radius: 6px;
-                        padding: 4px 10px;
-                        font-size: 11px;
-                        font-weight: 700;
-                    }
-                    QPushButton:hover { background-color: #06B6D4; }
-                """)
-                btn_deliver.clicked.connect(self._mark_delivered)
-                foot_row.addWidget(btn_deliver)
-            else:
-                btn_archive = QPushButton("انتقال به آرشیو 📁")
-                btn_archive.setCursor(Qt.CursorShape.PointingHandCursor)
-                btn_archive.setStyleSheet("""
-                    QPushButton {
-                        font-family: 'Vazirmatn';
-                        background-color: #10B981;
-                        color: #FFFFFF;
-                        border: none;
-                        border-radius: 6px;
-                        padding: 4px 10px;
-                        font-size: 11px;
-                        font-weight: 700;
-                    }
-                    QPushButton:hover { background-color: #059669; }
-                """)
-                btn_archive.clicked.connect(self._open_archive_confirm)
-                foot_row.addWidget(btn_archive)
+        btn_pay = QPushButton("ثبت واریزی")
+        btn_pay.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_pay.setStyleSheet("""
+            QPushButton {
+                font-family: 'Vazirmatn';
+                background-color: rgba(16, 185, 129, 0.12);
+                color: #34D399;
+                border: 1px solid rgba(16, 185, 129, 0.3);
+                border-radius: 6px;
+                padding: 4px 10px;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            QPushButton:hover {
+                background-color: #10B981;
+                color: #FFFFFF;
+            }
+        """)
+        btn_pay.clicked.connect(self._open_payment)
+        foot_row.addWidget(btn_pay)
 
         foot_row.addStretch()
 
@@ -543,10 +470,12 @@ class ProjectCard(BaseProjectCard):
                 color: #818CF8;
                 border: none;
                 font-size: 11.5px;
-                font-weight: 700;
+                font-weight: 800;
                 padding: 4px 4px;
             }
-            QPushButton:hover { color: #A5B4FC; }
+            QPushButton:hover {
+                color: #A5B4FC;
+            }
         """)
         btn_details.clicked.connect(self._open_details)
         foot_row.addWidget(btn_details)
@@ -554,16 +483,17 @@ class ProjectCard(BaseProjectCard):
         self.card_layout.addLayout(foot_row)
 
     def _show_context_menu(self, parent_btn: QPushButton):
-        menu = QMenu(self)
-        menu.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        menu = StudioMenu(self)
 
-        act_nle = menu.addAction("اجرای فایل پروژه 🎬")
-        act_edit = menu.addAction("ویرایش مشخصات پروژه ✏️")
-        act_share = menu.addAction("ارسال فاکتور و وضعیت به استودیو 💬")
-        act_archive = menu.addAction("انتقال به آرشیو 📁")
-        act_delete = menu.addAction("حذف کامل پروژه 🗑️")
+        act_nle = menu.addAction(IconProvider.get_icon("nle_launch", "#818CF8", size=14), "اجرای فایل پروژه")
+        act_edit = menu.addAction(IconProvider.get_icon("edit", "#818CF8", size=14), "ویرایش مشخصات پروژه")
+        act_share = menu.addAction(IconProvider.get_icon("message", "#38BDF8", size=14), "ارسال فاکتور و وضعیت به استودیو")
+        act_archive = menu.addAction(IconProvider.get_icon("archive", "#10B981", size=14), "انتقال به آرشیو")
+        
+        menu.addSeparator()
+        act_delete = menu.addAction(IconProvider.get_icon("trash", "#EF4444", size=14), "حذف کامل پروژه")
 
-        action = menu.exec(parent_btn.mapToGlobal(parent_btn.rect().bottomLeft()))
+        action = menu.show_beside_button(parent_btn)
         if action == act_nle:
             self._launch_nle_project()
         elif action == act_edit:
@@ -574,9 +504,6 @@ class ProjectCard(BaseProjectCard):
             self._open_archive_confirm()
         elif action == act_delete:
             self._delete_project()
-
-    def _mark_delivered(self):
-        ProjectController.mark_as_delivered(self.project_id)
 
     def _launch_nle_project(self):
         nle_path = self.project.get("nle_project_path", "")
@@ -620,24 +547,16 @@ class ProjectCard(BaseProjectCard):
         diag.exec()
 
     def _open_details(self):
-        proj_id = self.project_id
         win = self.window()
-        diag = ProjectDetailsDialog(proj_id, win)
-        diag.exec()
+        QTimer.singleShot(0, lambda: ProjectDetailsDialog(self.project_id, win).exec())
 
     def _open_payment(self):
-        proj_id = self.project_id
         win = self.window()
-        diag = NewTransactionDialog(proj_id, parent=win)
-        diag.exec()
+        QTimer.singleShot(0, lambda: NewTransactionDialog(self.project_id, parent=win).exec())
 
     def _open_folder(self):
         path_str = self.project.get("primary_path")
         if not path_str or not Path(path_str).exists():
             global_signals.show_toast.emit("مسیر پوشه مشخص نشده یا هارد متصل نیست", "error")
             return
-        
-        couple_name = self.project.get("couple_names") or self.project.get("title", "پروژه")
-        win = self.window()
-        diag = ProjectMediaExplorerDialog(folder_path=path_str, project_title=couple_name, parent=win)
-        diag.exec()
+        open_path_in_os(path_str)

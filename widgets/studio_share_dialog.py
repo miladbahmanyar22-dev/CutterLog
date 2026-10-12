@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt, QSize
 
 from core.settings_manager import SettingsManager
 from core.project_controller import ProjectController
-from core.persian_utils import format_toman, to_persian_numbers
+from core.persian_utils import format_toman, to_persian_numbers, format_studio_title
 from core.icon_provider import IconProvider
 from widgets.studio_dialog_base import StudioBaseDialog
 
@@ -125,7 +125,13 @@ class StudioShareDialog(StudioBaseDialog):
 
         settings = SettingsManager.load_settings()
         editor_name = settings.get("editor_name", "تدوین‌گر پروژه")
-        studio_name = self.project.client.company if (self.project.client and self.project.client.company) else (self.project.client.full_name if self.project.client else "مدیریت محترم استودیو")
+        
+        raw_studio = self.project.client.company if (self.project.client and self.project.client.company) else (self.project.client.full_name if self.project.client else "")
+        if raw_studio:
+            studio_name = format_studio_title(raw_studio)
+        else:
+            studio_name = "مدیریت محترم استودیو"
+
         couple = self.project.couple_names or self.project.title
         fin = ProjectController.get_project_financial_summary(self.project)
         rem_str = format_toman(fin["remaining"])

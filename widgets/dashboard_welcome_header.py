@@ -1,781 +1,529 @@
 # ==================================================
 # FILE: widgets/dashboard_welcome_header.py
 # ==================================================
-import random
-import math
+from pathlib import Path
 from datetime import datetime
 import jdatetime
+from typing import Optional
+
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QVBoxLayout, QLabel, 
-    QGraphicsOpacityEffect, QWidget, QSizePolicy
+    QWidget, QSizePolicy, QGraphicsOpacityEffect
 )
 from PySide6.QtCore import (
-    Qt, QTimer, QTime, QPropertyAnimation, 
-    QEasingCurve, Property, QRectF, QPointF
+    Qt, QTimer, QRectF, QPropertyAnimation, 
+    QEasingCurve, Property
 )
 from PySide6.QtGui import (
-    QPainter, QColor, QRadialGradient, QLinearGradient, 
-    QPen, QBrush, QPainterPath, QFont
+    QPainter, QColor, QLinearGradient, QRadialGradient, 
+    QBrush, QPen, QMouseEvent
 )
 
 from core.settings_manager import SettingsManager
+from core.project_controller import ProjectController
 from core.persian_utils import to_persian_numbers, get_persian_date_readable
-
-EDITING_QUOTES = [
-    "تدوین یعنی روح بخشیدن به نماهای پراکنده؛ امروز فریم‌ها را به داستان تبدیل کن.",
-    "هر کات یک تصمیم هنری است؛ ریتم داستان در دستان توست.",
-    "در تدوین، سکوت‌ها و مکث‌ها به اندازه کات‌ها قدرتمندند.",
-    "بهترین تدوین آن است که احساس شود، نه اینکه دیده شود.",
-    "کات درست در لحظه درست، جادوی سینما را خلق می‌کند.",
-    "یک تایم‌لاین منظم، ذهن آرام و خروجی شاهکار می‌سازد.",
-    "تدوین هنر دور ریختن خوب‌ها برای خلق شاهکار است.",
-    "ریتم را با چشمان نبین، با قلبت احساس کن.",
-    "تفاوت کار خوب با کار عالی در توجه به فریم‌های پایانی است.",
-    "تدوین‌گر آخرین نویسنده و اولین مخاطب فیلم است."
-]
+from core.signals import global_signals
+from time_tracking.timer_engine import TimeTrackingEngine
 
 
-# ----------------------------------------------------
-# ویجت‌های ارقام دیجیتال و تایم‌کد (کاملاً دست‌نخورده)
-# ----------------------------------------------------
-class AnimatedDigitCell(QWidget):
-    def __init__(self, parent=None):
+class StaticSlotDigit(QWidget):
+    """
+    اسلات قفل‌شده رقم بدون کوچک‌ترین جابه‌جایی چپ/راست (Zero Jitter)
+    با ترانزیشن فید نرم و بدون خطای disconnect در سیگنال
+    """
+    def __init__(self, width: int, font_size: int = 24, font_color: str = "#FFFFFF", parent=None):
         super().__init__(parent)
-        self.setFixedSize(12, 22)
-        self._current_char = "۰"
-        self._next_char = "۰"
-        self._offset = 0.0
+        self.slot_width = width
+        self.font_size = font_size
+        self.font_color = font_color
+        self.current_text = "۰۰"
+        self._target_text = ""
+        self._fade_level = 1.0
+        self._is_fading_in = False
 
-        self.anim = QPropertyAnimation(self, b"offset")
+        h = int(font_size * 1.5)
+        self.setFixedSize(self.slot_width, h)
+
+        self.lbl = QLabel(self.current_text, self)
+        self.lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl.setGeometry(0, 0, self.slot_width, h)
+        self.lbl.setStyleSheet(f"""
+            QLabel {{
+                font-family: 'Vazirmatn';
+                font-size: {self.font_size}px;
+                font-weight: 900;
+                color: {self.font_color};
+                background: transparent;
+                border: none;
+                padding: 0;
+            }}
+        """)
+
+        self.opacity_effect = QGraphicsOpacityEffect(self.lbl)
+        self.lbl.setGraphicsEffect(self.opacity_effect)
+        self.opacity_effect.setOpacity(1.0)
+
+        self.anim = QPropertyAnimation(self, b"fade_level", self)
         self.anim.setDuration(160)
-        self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.anim.setEasingCurve(QEasingCurve.Type.InOutSine)
+        self.anim.finished.connect(self._on_animation_phase_finished)
 
-    def get_offset(self) -> float:
-        return self._offset
+    def get_fade_level(self) -> float:
+        return self._fade_level
 
-    def set_offset(self, val: float):
-        self._offset = val
-        self.update()
+    def set_fade_level(self, val: float):
+        self._fade_level = val
+        self.opacity_effect.setOpacity(val)
 
-    offset = Property(float, get_offset, set_offset)
+    fade_level = Property(float, get_fade_level, set_fade_level)
 
-    def set_char(self, new_char: str):
-        if self._current_char == new_char:
+    def _on_animation_phase_finished(self):
+        if not self._is_fading_in:
+            self.current_text = self._target_text
+            self.lbl.setText(self.current_text)
+            self._is_fading_in = True
+            self.anim.setStartValue(0.45)
+            self.anim.setEndValue(1.0)
+            self.anim.start()
+        else:
+            self._is_fading_in = False
+
+    def set_value(self, new_text: str):
+        if new_text == self.current_text and self.anim.state() != QPropertyAnimation.State.Running:
             return
-        if self.anim.state() == QPropertyAnimation.State.Running:
-            self.anim.stop()
-            self._current_char = self._next_char
 
-        self._next_char = new_char
-        self.anim.setStartValue(0.0)
-        self.anim.setEndValue(1.0)
+        self._target_text = new_text
+        self._is_fading_in = False
+        self.anim.stop()
+        self.anim.setStartValue(self.opacity_effect.opacity())
+        self.anim.setEndValue(0.45)
         self.anim.start()
 
-    def set_char_instant(self, char: str):
-        self.anim.stop()
-        self._current_char = char
-        self._next_char = char
-        self._offset = 0.0
-        self.update()
 
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
-
-        font = QFont("Vazirmatn", 11, QFont.Weight.Black)
-        font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
-        painter.setFont(font)
-
-        w, h = float(self.width()), float(self.height())
-
-        if self._offset == 0.0:
-            painter.setPen(QColor("#A5B4FC"))
-            painter.drawText(QRectF(0, 0, w, h), Qt.AlignmentFlag.AlignCenter, self._current_char)
-        else:
-            old_y = -self._offset * h
-            alpha_old = max(0, int(255 * (1.0 - self._offset)))
-            painter.setPen(QColor(165, 180, 252, alpha_old))
-            painter.drawText(QRectF(0, old_y, w, h), Qt.AlignmentFlag.AlignCenter, self._current_char)
-
-            new_y = (1.0 - self._offset) * h
-            alpha_new = min(255, int(255 * self._offset))
-            painter.setPen(QColor(165, 180, 252, alpha_new))
-            painter.drawText(QRectF(0, new_y, w, h), Qt.AlignmentFlag.AlignCenter, self._next_char)
-
-        painter.end()
-
-
-class TimeSegmentBlock(QFrame):
+class MasterTimecodeModule(QFrame):
+    """
+    ماژول ساعت استودیویی لوکس با پایداری کامل ارقام و بدون پرش به چپ و راست
+    """
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(32, 26)
+        self.setFixedSize(228, 88)
+        self.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        
+        self.target_ratio = 0.0
+
+        self.setObjectName("MasterTimecodeModule")
         self.setStyleSheet("""
-            QFrame {
-                background-color: rgba(14, 20, 34, 0.90);
-                border: 1px solid rgba(99, 102, 241, 0.22);
-                border-radius: 5px;
+            QFrame#MasterTimecodeModule {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #0E1322, stop:0.5 #090D18, stop:1 #060812);
+                border: 1px solid rgba(99, 102, 241, 0.28);
+                border-radius: 12px;
             }
         """)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(1, 0, 1, 0)
-        layout.setSpacing(0)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.digit1 = AnimatedDigitCell(self)
-        self.digit2 = AnimatedDigitCell(self)
-        layout.addWidget(self.digit1)
-        layout.addWidget(self.digit2)
-
-
-class StudioTimecodeWidget(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
-        self.setFixedHeight(28)
-        self.setFixedWidth(132)
-        self._colon_visible = True
         self.init_ui()
 
     def init_ui(self):
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(3)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_lay = QVBoxLayout(self)
+        main_lay.setContentsMargins(14, 8, 14, 8)
+        main_lay.setSpacing(2)
+        main_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.block_hour = TimeSegmentBlock(self)
-        layout.addWidget(self.block_hour)
+        # ۱. هدر بالای ساعت
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(6)
+        top_row.setDirection(QHBoxLayout.Direction.LeftToRight)
+        top_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        self.lbl_colon1 = QLabel(":")
-        self.lbl_colon1.setFixedWidth(4)
-        self.lbl_colon1.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_colon1.setStyleSheet("color: #6366F1; font-family: 'Segoe UI'; font-size: 13px; font-weight: 900; background: transparent; border: none;")
-        layout.addWidget(self.lbl_colon1)
+        led_dot = QLabel("●")
+        led_dot.setStyleSheet("color: #00F0FF; font-size: 7px; background: transparent; border: none;")
+        top_row.addWidget(led_dot)
 
-        self.block_min = TimeSegmentBlock(self)
-        layout.addWidget(self.block_min)
+        lbl_ref = QLabel("MASTER TC • 25 FPS")
+        lbl_ref.setStyleSheet("""
+            font-family: 'Segoe UI', sans-serif;
+            font-size: 8px;
+            font-weight: 800;
+            color: #6366F1;
+            letter-spacing: 0.8px;
+            background: transparent;
+            border: none;
+        """)
+        top_row.addWidget(lbl_ref)
+        top_row.addStretch()
 
-        self.lbl_colon2 = QLabel(":")
-        self.lbl_colon2.setFixedWidth(4)
-        self.lbl_colon2.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_colon2.setStyleSheet("color: #6366F1; font-family: 'Segoe UI'; font-size: 13px; font-weight: 900; background: transparent; border: none;")
-        layout.addWidget(self.lbl_colon2)
+        self.lbl_target_pct = QLabel("۰٪")
+        self.lbl_target_pct.setStyleSheet("""
+            font-family: 'Vazirmatn';
+            font-size: 10px;
+            font-weight: 800;
+            color: #34D399;
+            background: transparent;
+            border: none;
+        """)
+        top_row.addWidget(self.lbl_target_pct)
 
-        self.block_sec = TimeSegmentBlock(self)
-        layout.addWidget(self.block_sec)
+        main_lay.addLayout(top_row)
 
-    def set_time_string(self, time_str: str, animated: bool = True):
-        digits = [c for c in time_str if c.isdigit()]
-        if len(digits) < 6:
-            return
+        # ۲. ردیف ارقام با موقعیت کاملاً ثابت و قفل‌شده در محور افقی
+        digits_row = QHBoxLayout()
+        digits_row.setContentsMargins(0, 0, 0, 0)
+        digits_row.setSpacing(0)
+        digits_row.setDirection(QHBoxLayout.Direction.LeftToRight)
+        digits_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        cells = [
-            self.block_hour.digit1, self.block_hour.digit2,
-            self.block_min.digit1, self.block_min.digit2,
-            self.block_sec.digit1, self.block_sec.digit2
-        ]
+        # اسلات ساعت
+        self.digit_hours = StaticSlotDigit(width=44, font_size=23, font_color="#F8FAFC", parent=self)
+        digits_row.addWidget(self.digit_hours)
 
-        for i, d in enumerate(digits):
-            fa_char = to_persian_numbers(d)
-            if animated:
-                cells[i].set_char(fa_char)
-            else:
-                cells[i].set_char_instant(fa_char)
+        # دو نقطه ثابت
+        lbl_colon = QLabel(":")
+        lbl_colon.setFixedWidth(12)
+        lbl_colon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_colon.setStyleSheet("""
+            QLabel {
+                font-family: 'Vazirmatn';
+                font-size: 20px;
+                font-weight: 900;
+                color: #818CF8;
+                background: transparent;
+                border: none;
+                padding-bottom: 3px;
+            }
+        """)
+        digits_row.addWidget(lbl_colon)
 
-        self._colon_visible = not self._colon_visible
-        colon_color = "#818CF8" if self._colon_visible else "rgba(99, 102, 241, 0.40)"
-        self.lbl_colon1.setStyleSheet(f"color: {colon_color}; font-family: 'Segoe UI'; font-size: 13px; font-weight: 900; background: transparent; border: none;")
-        self.lbl_colon2.setStyleSheet(f"color: {colon_color}; font-family: 'Segoe UI'; font-size: 13px; font-weight: 900; background: transparent; border: none;")
+        # اسلات دقیقه
+        self.digit_minutes = StaticSlotDigit(width=44, font_size=23, font_color="#F8FAFC", parent=self)
+        digits_row.addWidget(self.digit_minutes)
+
+        # فاصله تفکیک‌کننده ثابت
+        sep_space = QLabel("")
+        sep_space.setFixedWidth(6)
+        sep_space.setStyleSheet("background: transparent; border: none;")
+        digits_row.addWidget(sep_space)
+
+        # اسلات ثانیه‌شمار فیروزه‌ای
+        self.digit_seconds = StaticSlotDigit(width=38, font_size=16, font_color="#00F0FF", parent=self)
+        digits_row.addWidget(self.digit_seconds)
+
+        main_lay.addLayout(digits_row)
+
+        # ۳. نوار خطی نئونی پیشرفت هدف کاری در پایین
+        self.progress_track = QFrame()
+        self.progress_track.setFixedHeight(2.5)
+        self.progress_track.setStyleSheet("""
+            QFrame {
+                background-color: rgba(255, 255, 255, 0.08);
+                border-radius: 1.25px;
+                border: none;
+            }
+        """)
+        track_lay = QHBoxLayout(self.progress_track)
+        track_lay.setContentsMargins(0, 0, 0, 0)
+        track_lay.setSpacing(0)
+        track_lay.setDirection(QHBoxLayout.Direction.LeftToRight)
+
+        self.progress_fill = QFrame()
+        self.progress_fill.setFixedHeight(2.5)
+        self.progress_fill.setStyleSheet("background-color: #6366F1; border-radius: 1.25px; border: none;")
+        track_lay.addWidget(self.progress_fill)
+        track_lay.addStretch()
+
+        main_lay.addWidget(self.progress_track)
+
+    def set_time_state(self, h: int, m: int, s: int, ratio: float):
+        self.digit_hours.set_value(to_persian_numbers(f"{h:02d}"))
+        self.digit_minutes.set_value(to_persian_numbers(f"{m:02d}"))
+        self.digit_seconds.set_value(to_persian_numbers(f"{s:02d}"))
+
+        self.target_ratio = max(0.0, min(1.0, ratio))
+        pct_int = int(self.target_ratio * 100)
+        self.lbl_target_pct.setText(f"{to_persian_numbers(pct_int)}٪")
+
+        track_w = self.progress_track.width() if self.progress_track.width() > 0 else 190
+        fill_w = max(0, int(track_w * self.target_ratio))
+        self.progress_fill.setFixedWidth(fill_w)
+
+        if self.target_ratio >= 1.0:
+            self.progress_fill.setStyleSheet("background-color: #10B981; border-radius: 1.25px; border: none;")
+            self.lbl_target_pct.setStyleSheet("font-family: 'Vazirmatn'; font-size: 10px; font-weight: 800; color: #10B981; background: transparent; border: none;")
+        else:
+            self.progress_fill.setStyleSheet("background-color: #6366F1; border-radius: 1.25px; border: none;")
+            self.lbl_target_pct.setStyleSheet("font-family: 'Vazirmatn'; font-size: 10px; font-weight: 800; color: #818CF8; background: transparent; border: none;")
 
 
-# ----------------------------------------------------
-# کلاس هدر پیشخوان با Seasonal Studio Atmosphere
-# ----------------------------------------------------
 class DashboardWelcomeHeader(QFrame):
+    """
+    هدر پیشخوان مینیمال، لوکس و متمرکز استودیو
+    Monolithic Studio Master Slate
+    """
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("DashboardWelcomeHeaderFrame")
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        self.setFixedHeight(120)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.current_quote_idx = 0
-        self._last_greeting_key = None
-        self._last_day_key = None
-        self.rotation_angle = 0.0
+        self.setFixedHeight(116)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Fixed)
+        self._is_hovered = False
 
-        self.current_season = "spring"
-        self._init_season_structures()
+        self.urgent_project_id: Optional[int] = None
+        self.urgent_text: str = ""
 
         self.init_ui()
         self._setup_timer()
         self.update_all()
 
-    # =========================================================================
-    # سیستم فصلی خودکار (بدون Override تست)
-    # =========================================================================
-    def _get_current_season(self) -> str:
-        """تشخیص خودکار فصل بر مبنای ماه تاریخ جاری سیستم شمسی"""
-        try:
-            today_j = jdatetime.date.today()
-            month = today_j.month
-        except Exception:
-            month = 1
-
-        if 1 <= month <= 3:
-            return "spring"
-        elif 4 <= month <= 6:
-            return "summer"
-        elif 7 <= month <= 9:
-            return "autumn"
-        else:
-            return "winter"
-
-    def _init_season_structures(self):
-        """مقداردهی اولیه پایدار ساختار ذرات"""
-        # ۱. گلبرگ‌های بهاری
-        self._spring_petals = []
-        for _ in range(4):
-            self._spring_petals.append({
-                "x": random.uniform(10.0, 110.0),
-                "y": random.uniform(15.0, 105.0),
-                "speed_x": random.uniform(0.25, 0.45),
-                "speed_y": random.uniform(0.10, 0.25),
-                "angle": random.uniform(0.0, 360.0),
-                "rot_speed": random.uniform(0.3, 0.8),
-                "scale": random.uniform(0.8, 1.2),
-                "phase": random.uniform(0.0, 6.28)
-            })
-
-        # ۲. ذرات نورانی تابستانی
-        self._summer_sparks = []
-        for _ in range(3):
-            self._summer_sparks.append({
-                "orbit_r": random.uniform(34.0, 48.0),
-                "speed": random.uniform(0.015, 0.035),
-                "current_theta": random.uniform(0.0, 6.28),
-                "pulse_phase": random.uniform(0.0, 6.28),
-                "size": random.uniform(1.2, 1.8)
-            })
-
-        # ۳. برگ‌های پاییزی
-        self._autumn_leaves = []
-        colors_autumn = [
-            QColor(217, 119, 6, 175),
-            QColor(234, 88, 12, 160),
-            QColor(185, 28, 28, 140)
-        ]
-        for i in range(3):
-            self._autumn_leaves.append({
-                "x": random.uniform(20.0, 100.0),
-                "y": random.uniform(-10.0, 120.0),
-                "speed_y": random.uniform(0.30, 0.50),
-                "sway_amp": random.uniform(0.40, 0.70),
-                "sway_phase": random.uniform(0.0, 6.28),
-                "angle": random.uniform(0.0, 360.0),
-                "rot_speed": random.uniform(0.2, 0.6),
-                "scale": random.uniform(0.85, 1.15),
-                "color": colors_autumn[i % len(colors_autumn)]
-            })
-
-        # ۴. دانه‌های برف زمستانی
-        self._winter_snowflakes = []
-        for _ in range(5):
-            self._winter_snowflakes.append({
-                "x": random.uniform(15.0, 105.0),
-                "y": random.uniform(-5.0, 125.0),
-                "speed_y": random.uniform(0.20, 0.40),
-                "sway_freq": random.uniform(0.02, 0.04),
-                "sway_phase": random.uniform(0.0, 6.28),
-                "r": random.uniform(1.0, 2.0),
-                "alpha": random.randint(110, 200)
-            })
-
-    def _update_season_animation(self):
-        """به‌روزرسانی فریم‌ها بدون مصرف حافظه اضافه"""
-        for p in self._spring_petals:
-            p["x"] += p["speed_x"]
-            p["y"] += math.sin(p["phase"]) * 0.20 + p["speed_y"]
-            p["phase"] += 0.03
-            p["angle"] += p["rot_speed"]
-            if p["x"] > 130.0 or p["y"] > 125.0:
-                p["x"] = random.uniform(-5.0, 15.0)
-                p["y"] = random.uniform(10.0, 80.0)
-
-        for s in self._summer_sparks:
-            s["current_theta"] += s["speed"]
-            s["pulse_phase"] += 0.04
-
-        for leaf in self._autumn_leaves:
-            leaf["y"] += leaf["speed_y"]
-            leaf["x"] += math.sin(leaf["sway_phase"]) * leaf["sway_amp"]
-            leaf["sway_phase"] += 0.035
-            leaf["angle"] += leaf["rot_speed"]
-            if leaf["y"] > 130.0:
-                leaf["y"] = random.uniform(-15.0, -5.0)
-                leaf["x"] = random.uniform(20.0, 95.0)
-
-        for flake in self._winter_snowflakes:
-            flake["y"] += flake["speed_y"]
-            flake["x"] += math.sin(flake["sway_phase"]) * 0.15
-            flake["sway_phase"] += flake["sway_freq"]
-            if flake["y"] > 128.0:
-                flake["y"] = random.uniform(-10.0, -2.0)
-                flake["x"] = random.uniform(15.0, 105.0)
-
-    def _paint_spring_atmosphere(self, painter: QPainter, cx: float, cy: float, is_night: bool):
-        painter.save()
-        painter.translate(cx - 30.0, cy + 18.0)
-        
-        branch_path = QPainterPath()
-        branch_path.moveTo(-10.0, 15.0)
-        branch_path.cubicTo(0.0, 5.0, 15.0, -5.0, 32.0, -12.0)
-        
-        branch_color = QColor(16, 185, 129, 65 if not is_night else 40)
-        painter.setPen(QPen(branch_color, 1.3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawPath(branch_path)
-
-        leaf_color = QColor(52, 211, 153, 90 if not is_night else 50)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(leaf_color)
-
-        leaf1 = QPainterPath()
-        leaf1.moveTo(8.0, 0.0)
-        leaf1.quadTo(12.0, -6.0, 17.0, -5.0)
-        leaf1.quadTo(13.0, 1.0, 8.0, 0.0)
-        painter.drawPath(leaf1)
-
-        leaf2 = QPainterPath()
-        leaf2.moveTo(22.0, -8.0)
-        leaf2.quadTo(28.0, -13.0, 32.0, -11.0)
-        leaf2.quadTo(26.0, -5.0, 22.0, -8.0)
-        painter.drawPath(leaf2)
-        painter.restore()
-
-        petal_color = QColor(167, 243, 208, 140 if not is_night else 95)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(petal_color)
-
-        for p in self._spring_petals:
-            painter.save()
-            painter.translate(p["x"], p["y"])
-            painter.rotate(p["angle"])
-            painter.scale(p["scale"], p["scale"])
-
-            petal_path = QPainterPath()
-            petal_path.moveTo(0.0, -3.0)
-            petal_path.quadTo(2.2, 0.0, 0.0, 3.0)
-            petal_path.quadTo(-2.2, 0.0, 0.0, -3.0)
-            painter.drawPath(petal_path)
-            painter.restore()
-
-    def _paint_summer_atmosphere(self, painter: QPainter, cx: float, cy: float, is_night: bool):
-        if is_night:
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(251, 191, 36, 110))
-            for s in self._summer_sparks:
-                sx = cx + math.cos(s["current_theta"]) * (s["orbit_r"] * 0.75)
-                sy = cy + math.sin(s["current_theta"]) * (s["orbit_r"] * 0.75)
-                painter.drawEllipse(QPointF(sx, sy), s["size"] * 0.8, s["size"] * 0.8)
-            return
-
-        painter.setPen(Qt.PenStyle.NoPen)
-        for s in self._summer_sparks:
-            alpha = int(100 + math.sin(s["pulse_phase"]) * 45)
-            painter.setBrush(QColor(251, 191, 36, alpha))
-            sx = cx + math.cos(s["current_theta"]) * s["orbit_r"]
-            sy = cy + math.sin(s["current_theta"]) * s["orbit_r"]
-            painter.drawEllipse(QPointF(sx, sy), s["size"], s["size"])
-
-    def _paint_autumn_atmosphere(self, painter: QPainter):
-        painter.setPen(Qt.PenStyle.NoPen)
-        for leaf in self._autumn_leaves:
-            painter.save()
-            painter.translate(leaf["x"], leaf["y"])
-            painter.rotate(leaf["angle"])
-            painter.scale(leaf["scale"], leaf["scale"])
-            painter.setBrush(leaf["color"])
-
-            leaf_path = QPainterPath()
-            leaf_path.moveTo(0.0, -4.5)
-            leaf_path.cubicTo(3.2, -2.0, 3.2, 2.0, 0.0, 4.5)
-            leaf_path.cubicTo(-3.2, 2.0, -3.2, -2.0, 0.0, -4.5)
-            painter.drawPath(leaf_path)
-
-            painter.setPen(QPen(QColor(255, 255, 255, 60), 0.7))
-            painter.drawLine(QPointF(0.0, -3.5), QPointF(0.0, 3.5))
-            painter.restore()
-
-    def _paint_winter_atmosphere(self, painter: QPainter):
-        painter.setPen(Qt.PenStyle.NoPen)
-        for flake in self._winter_snowflakes:
-            painter.setBrush(QColor(224, 242, 254, flake["alpha"]))
-            painter.drawEllipse(QPointF(flake["x"], flake["y"]), flake["r"], flake["r"])
-
-    # =========================================================================
-    # ساختار واسط کاربری (UI)
-    # =========================================================================
     def init_ui(self):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(22, 14, 20, 14)
-        layout.setSpacing(0)
+        layout.setContentsMargins(24, 12, 20, 12)
+        layout.setSpacing(20)
         layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        # ستون متن خوش‌آمدگویی
+        # پنل راست: تایپوگرافی ادیتوریال و پایش هویتی
         text_col = QVBoxLayout()
-        text_col.setSpacing(0)
+        text_col.setSpacing(4)
         text_col.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        top_greeting_row = QHBoxLayout()
-        top_greeting_row.setSpacing(8)
-        top_greeting_row.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        # خط اول: خوش‌آمدگویی رسمی + بج آنلاین
+        greeting_row = QHBoxLayout()
+        greeting_row.setSpacing(10)
+        greeting_row.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-        self.lbl_period = QLabel()
-        self.lbl_period.setStyleSheet("""
-            font-family: 'Vazirmatn';
-            font-size: 14px;
-            font-weight: 500;
-            color: #94A3B8;
-            background: transparent;
-            border: none;
+        self.lbl_greeting = QLabel("خوش‌آمدید")
+        self.lbl_greeting.setStyleSheet("""
+            QLabel {
+                font-family: 'Vazirmatn';
+                font-size: 16px;
+                font-weight: 900;
+                color: #F8FAFC;
+                background: transparent;
+                border: none;
+            }
         """)
-        top_greeting_row.addWidget(self.lbl_period)
+        greeting_row.addWidget(self.lbl_greeting)
 
-        self.lbl_editor = QLabel()
-        self.lbl_editor.setStyleSheet("""
-            font-family: 'Vazirmatn';
-            font-size: 16px;
-            font-weight: 800;
-            color: #F8FAFC;
-            background: transparent;
-            border: none;
-            letter-spacing: -0.2px;
-        """)
-        top_greeting_row.addWidget(self.lbl_editor)
-
-        # کپسول وضعیت استاندارد، یکپارچه و مینیمال استودیو
-        self.live_badge = QLabel()
-        self.live_badge.setStyleSheet("""
+        self.badge_status = QLabel("●  آماده تدوین")
+        self.badge_status.setStyleSheet("""
             QLabel {
                 font-family: 'Vazirmatn';
                 font-size: 10px;
                 font-weight: 700;
-                color: #818CF8;
-                background-color: rgba(99, 102, 241, 0.12);
-                border: 1px solid rgba(99, 102, 241, 0.25);
+                color: #34D399;
+                background-color: rgba(16, 185, 129, 0.12);
+                border: 1px solid rgba(16, 185, 129, 0.28);
                 border-radius: 6px;
                 padding: 2px 8px;
             }
         """)
-        top_greeting_row.addWidget(self.live_badge)
+        greeting_row.addWidget(self.badge_status)
+        greeting_row.addStretch()
+        text_col.addLayout(greeting_row)
 
-        top_greeting_row.addStretch()
-        text_col.addLayout(top_greeting_row)
-
-        text_col.addSpacing(10)
-
-        quote_row = QHBoxLayout()
-        quote_row.setContentsMargins(0, 0, 0, 0)
-        quote_row.setSpacing(8)
-        quote_row.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
-        lbl_q_icon = QLabel("🎬")
-        lbl_q_icon.setStyleSheet("font-size: 11px; background: transparent; border: none;")
-        quote_row.addWidget(lbl_q_icon)
-
-        self.lbl_quote = QLabel()
-        self.lbl_quote.setWordWrap(False)
-        self.lbl_quote.setStyleSheet("""
-            font-family: 'Vazirmatn';
-            font-size: 11.5px;
-            color: #8F909D;
-            border: none;
-            background: transparent;
-            font-style: italic;
+        # خط دوم: تاریخ تقویم شمسی و شیفت کاری
+        self.lbl_date_shift = QLabel()
+        self.lbl_date_shift.setStyleSheet("""
+            QLabel {
+                font-family: 'Vazirmatn';
+                font-size: 11.5px;
+                font-weight: 500;
+                color: #94A3B8;
+                background: transparent;
+                border: none;
+            }
         """)
+        text_col.addWidget(self.lbl_date_shift)
 
-        self.opacity_effect = QGraphicsOpacityEffect(self.lbl_quote)
-        self.lbl_quote.setGraphicsEffect(self.opacity_effect)
-        quote_row.addWidget(self.lbl_quote, stretch=1)
+        # خط سوم: خط متادیتا و پایش فوری ددلاین
+        self.lbl_pipeline_status = QLabel()
+        self.lbl_pipeline_status.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.lbl_pipeline_status.mouseReleaseEvent = self._on_status_clicked
+        self.lbl_pipeline_status.setStyleSheet("""
+            QLabel {
+                font-family: 'Vazirmatn';
+                font-size: 11px;
+                font-weight: 600;
+                color: #64748B;
+                background: transparent;
+                border: none;
+            }
+        """)
+        text_col.addWidget(self.lbl_pipeline_status)
 
-        text_col.addLayout(quote_row)
         layout.addLayout(text_col, stretch=1)
 
-        # جداکننده ظریف وسط
-        self.separator = QFrame()
-        self.separator.setFixedWidth(1)
-        self.separator.setFixedHeight(46)
-        self.separator.setStyleSheet("""
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                stop:0 rgba(255, 255, 255, 0.0), 
-                stop:0.5 rgba(255, 255, 255, 0.10), 
-                stop:1 rgba(255, 255, 255, 0.0));
-            border: none;
-        """)
-        layout.addSpacing(18)
-        layout.addWidget(self.separator)
-        layout.addSpacing(18)
+        # جداکننده خطی ظریف
+        divider = QFrame()
+        divider.setFixedWidth(1)
+        divider.setFixedHeight(54)
+        divider.setStyleSheet("background-color: rgba(255, 255, 255, 0.05); border: none;")
+        layout.addWidget(divider)
 
-        # پنل ساعت و تایم‌کد
-        time_pod = QFrame()
-        time_pod.setFixedWidth(175)
-        time_pod.setStyleSheet("""
-            QFrame {
-                background: rgba(18, 24, 38, 0.75);
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 10px;
-            }
-            QFrame:hover {
-                border-color: rgba(99, 102, 241, 0.35);
-                background: rgba(22, 31, 48, 0.85);
-            }
-        """)
-        time_pod.setMouseTracking(True)
+        # پنل چپ: ماژول ساعت با پایداری کامل ارقام
+        self.timecode_module = MasterTimecodeModule(self)
+        layout.addWidget(self.timecode_module)
 
-        time_col = QVBoxLayout(time_pod)
-        time_col.setContentsMargins(10, 8, 10, 8)
-        time_col.setSpacing(3)
-        time_col.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        top_meta = QHBoxLayout()
-        top_meta.setContentsMargins(0, 0, 0, 0)
-        top_meta.setSpacing(4)
-        top_meta.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        dot_rec = QLabel("●")
-        dot_rec.setStyleSheet("color: #EF4444; font-size: 7px; background: transparent; border: none;")
-        top_meta.addWidget(dot_rec)
-
-        lbl_tc = QLabel("TIMECODE • 25 FPS")
-        lbl_tc.setStyleSheet("""
-            font-family: 'Segoe UI', sans-serif;
-            font-size: 7.5px;
-            font-weight: 800;
-            color: #818CF8;
-            letter-spacing: 0.5px;
-            background: transparent;
-            border: none;
-        """)
-        top_meta.addWidget(lbl_tc)
-        time_col.addLayout(top_meta)
-
-        self.timecode_widget = StudioTimecodeWidget(time_pod)
-        time_col.addWidget(self.timecode_widget, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        self.lbl_date = QLabel()
-        self.lbl_date.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_date.setStyleSheet("""
-            font-family: 'Vazirmatn';
-            font-size: 9px;
-            color: #64748B;
-            font-weight: 500;
-            border: none;
-            background: transparent;
-        """)
-        time_col.addWidget(self.lbl_date)
-
-        layout.addWidget(time_pod)
-
-    # =========================================================================
-    # موتور نقاشی (PaintEvent)
-    # =========================================================================
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
-        w, h = float(self.width()), float(self.height())
-        rect = QRectF(0, 0, w, h)
-        path = QPainterPath()
-        path.addRoundedRect(rect, 12, 12)
-        painter.setClipPath(path)
+            w = float(self.width())
+            h = float(self.height())
+            rect = QRectF(0.5, 0.5, w - 1.0, h - 1.0)
 
-        hour = datetime.now().hour
-        is_night = (hour < 5 or hour >= 21)
-
-        # گرادیان استاندارد استودیویی با ته‌مایه فصلی
-        gradient = QLinearGradient(0, 0, w, h)
-        if self.current_season == "spring":
-            gradient.setColorAt(0.0, QColor("#101726"))
-            gradient.setColorAt(0.5, QColor("#121F2B"))
-            gradient.setColorAt(1.0, QColor("#0E1422"))
-            season_glow_color = QColor(16, 185, 129, 20)
-        elif self.current_season == "summer":
-            gradient.setColorAt(0.0, QColor("#101726"))
-            gradient.setColorAt(0.5, QColor("#142033"))
-            gradient.setColorAt(1.0, QColor("#0E1422"))
-            season_glow_color = QColor(56, 189, 248, 18)
-        elif self.current_season == "autumn":
-            gradient.setColorAt(0.0, QColor("#121624"))
-            gradient.setColorAt(0.5, QColor("#1A1B29"))
-            gradient.setColorAt(1.0, QColor("#0F1320"))
-            season_glow_color = QColor(245, 158, 11, 18)
-        else:  # winter
-            gradient.setColorAt(0.0, QColor("#0E1422"))
-            gradient.setColorAt(0.5, QColor("#11192A"))
-            gradient.setColorAt(1.0, QColor("#0B101C"))
-            season_glow_color = QColor(147, 197, 253, 16)
-
-        painter.fillRect(rect, gradient)
-
-        # هاله محیطی نرم
-        glow = QRadialGradient(w * 0.25, h * 0.5, w * 0.45)
-        glow.setColorAt(0.0, season_glow_color)
-        glow.setColorAt(1.0, QColor(0, 0, 0, 0))
-        painter.fillRect(rect, glow)
-
-        # ── رندر لایه آسمان بر مبنای ساعت ──
-        cx, cy = 56.0, h * 0.5
-        painter.save()
-        painter.translate(cx, cy)
-
-        if 5 <= hour < 17:
-            pen_sun = QPen(QColor(248, 250, 252, 180), 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
-            painter.setPen(pen_sun)
-            painter.setBrush(QColor(255, 255, 255, 25))
-            painter.drawEllipse(QRectF(-26, -26, 52, 52))
-
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.rotate(self.rotation_angle)
-            pen_ray = QPen(QColor(248, 250, 252, 120), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
-            painter.setPen(pen_ray)
-            for angle in range(0, 360, 45):
-                painter.save()
-                painter.rotate(angle)
-                painter.drawLine(QPointF(0, -32), QPointF(0, -42))
-                painter.restore()
-
-        elif 17 <= hour < 21:
-            pen_horizon = QPen(QColor(248, 250, 252, 170), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
-            painter.setPen(pen_horizon)
-            painter.setBrush(QColor(255, 255, 255, 25))
-            painter.drawEllipse(QRectF(-28, -28, 56, 56))
-
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawLine(QPointF(-60, 0), QPointF(60, 0))
-
-        else:
-            pen_moon = QPen(QColor(248, 250, 252, 180), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
-            painter.setPen(pen_moon)
-            moon_full = QPainterPath()
-            moon_full.addEllipse(QRectF(-24, -24, 48, 48))
-            moon_cut = QPainterPath()
-            moon_cut.addEllipse(QRectF(-6, -30, 42, 42))
-            painter.setBrush(QColor(255, 255, 255, 20))
-            painter.drawPath(moon_full.subtracted(moon_cut))
+            # پس‌زمینه تیتانیومی تاریک و عمیق
+            bg_grad = QLinearGradient(0, 0, w, h)
+            if self._is_hovered:
+                bg_grad.setColorAt(0.0, QColor("#101625"))
+                bg_grad.setColorAt(0.6, QColor("#0C111C"))
+                bg_grad.setColorAt(1.0, QColor("#080C14"))
+                border_pen = QPen(QColor(99, 102, 241, 70), 1.0)
+            else:
+                bg_grad.setColorAt(0.0, QColor("#0E1321"))
+                bg_grad.setColorAt(0.6, QColor("#0A0E18"))
+                bg_grad.setColorAt(1.0, QColor("#070A12"))
+                border_pen = QPen(QColor(255, 255, 255, 12), 1.0)
 
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(248, 250, 252, 140))
-            painter.drawEllipse(QPointF(-36, -14), 1.5, 1.5)
-            painter.drawEllipse(QPointF(32, -18), 1.2, 1.2)
-            painter.drawEllipse(QPointF(40, 12), 1.4, 1.4)
+            painter.setBrush(QBrush(bg_grad))
+            painter.drawRoundedRect(rect, 12, 12)
 
-        painter.restore()
+            # هاله نوری محو پشت نام کاربری
+            glow = QRadialGradient(w * 0.85, h * 0.35, w * 0.5)
+            glow.setColorAt(0.0, QColor(99, 102, 241, 18 if self._is_hovered else 10))
+            glow.setColorAt(1.0, QColor(0, 0, 0, 0))
+            painter.setBrush(QBrush(glow))
+            painter.drawRoundedRect(rect, 12, 12)
 
-        # ── رندر لایه فصلی متحرک ──
-        if self.current_season == "spring":
-            self._paint_spring_atmosphere(painter, cx, cy, is_night)
-        elif self.current_season == "summer":
-            self._paint_summer_atmosphere(painter, cx, cy, is_night)
-        elif self.current_season == "autumn":
-            self._paint_autumn_atmosphere(painter)
-        else:
-            self._paint_winter_atmosphere(painter)
+            # کادر بیرونی شارپ
+            painter.setPen(border_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(rect, 12, 12)
+        finally:
+            painter.end()
 
-        # خط مرزی دور کارت
-        painter.setClipping(False)
-        painter.setPen(QPen(QColor(255, 255, 255, 14), 1.0))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRoundedRect(QRectF(0.5, 0.5, w - 1.0, h - 1.0), 12, 12)
-        painter.end()
+    def enterEvent(self, event):
+        self._is_hovered = True
+        self.update()
+        super().enterEvent(event)
 
-    # =========================================================================
-    # تایمرها و منطق به‌روزرسانی
-    # =========================================================================
+    def leaveEvent(self, event):
+        self._is_hovered = False
+        self.update()
+        super().leaveEvent(event)
+
     def _setup_timer(self):
         self.timer_clock = QTimer(self)
         self.timer_clock.timeout.connect(self._tick)
         self.timer_clock.start(1000)
 
-        self.timer_anim = QTimer(self)
-        self.timer_anim.timeout.connect(self._tick_anim)
-        self.timer_anim.start(50)
-
     def _tick(self):
         now = datetime.now()
-        now_time = QTime.currentTime().toString("HH:mm:ss")
-        self.timecode_widget.set_time_string(now_time, animated=True)
 
-        greeting_text, mood_tag = self._get_time_greeting(now.hour)
-        current_greeting_key = f"{greeting_text}_{now.hour}_{self.current_season}"
-        if current_greeting_key != self._last_greeting_key:
-            self._last_greeting_key = current_greeting_key
-            self._refresh_greeting_text()
+        ratio = 0.0
+        try:
+            engine = TimeTrackingEngine.instance()
+            today_sec = engine.get_today_total_active_seconds()
+            target_mins = engine.get_daily_goal_minutes()
+            target_sec = max(1, target_mins * 60)
+            ratio = min(1.0, today_sec / target_sec)
+        except Exception:
+            pass
 
-        today_key = (now.year, now.month, now.day)
-        if today_key != self._last_day_key:
-            self._last_day_key = today_key
-            today_j = jdatetime.date.today()
-            self.lbl_date.setText(get_persian_date_readable(today_j))
-            new_season = self._get_current_season()
-            if new_season != self.current_season:
-                self.current_season = new_season
+        self.timecode_module.set_time_state(now.hour, now.minute, now.second, ratio)
 
-    def _tick_anim(self):
-        self.rotation_angle += 0.3
-        if self.rotation_angle >= 360.0:
-            self.rotation_angle -= 360.0
-
-        self._update_season_animation()
-        self.update()
-
-    def _get_time_greeting(self, hour: int = None) -> tuple[str, str]:
-        if hour is None:
-            hour = datetime.now().hour
-
-        if 5 <= hour < 11:
-            return "صبح بخیر،", "شیفت صبحگاهی"
-        elif 11 <= hour < 17:
-            return "ظهر بخیر،", "تمرکز روی تایم‌لاین"
+    def _get_shift_label(self, hour: int) -> str:
+        if 5 <= hour < 12:
+            return "شیفت کاری صبح"
+        elif 12 <= hour < 17:
+            return "شیفت کاری عصر"
         elif 17 <= hour < 21:
-            return "عصر بخیر،", "ساعات اوج تدوین"
-        else:
-            return "شب بخیر،", "شیفت شب استودیو"
+            return "ساعات اوج تدوین"
+        return "شیفت شب استودیو"
 
-    def _refresh_greeting_text(self):
-        settings = SettingsManager.load_settings()
-        editor_name = settings.get("editor_name") or "تدوین‌گر گرامی"
-        greeting_period, mood_tag = self._get_time_greeting()
+    def _scan_deadlines(self):
+        self.urgent_project_id = None
+        self.urgent_text = ""
+        now = datetime.utcnow()
 
-        self.lbl_period.setText(greeting_period)
-        self.lbl_editor.setText(f"{editor_name} 👋")
+        try:
+            active_projects = ProjectController.get_active_projects()
+            candidates = []
 
-        season_icons = {
-            "spring": "🌱",
-            "summer": "☀️",
-            "autumn": "🍂",
-            "winter": "❄️"
-        }
-        s_icon = season_icons.get(self.current_season, "🎬")
-        self.live_badge.setText(f"● {mood_tag} {s_icon}")
+            for p in active_projects:
+                c_cnt, t_cnt, pct = ProjectController.calculate_project_progress(p)
+                if pct >= 100 or not p.deadline:
+                    continue
+
+                delta_hours = (p.deadline - now).total_seconds() / 3600.0
+                if delta_hours <= 48:
+                    candidates.append((delta_hours, p))
+
+            if candidates:
+                candidates.sort(key=lambda x: x[0])
+                hours_left, p = candidates[0]
+                self.urgent_project_id = p.id
+                title = p.couple_names or p.title
+
+                if hours_left < 0:
+                    time_desc = f"{to_persian_numbers(abs(int(hours_left // 24)))} روز گذشته از موعد!"
+                elif hours_left <= 24:
+                    time_desc = f"تنها {to_persian_numbers(int(hours_left))} ساعت باقی‌مانده"
+                else:
+                    time_desc = f"{to_persian_numbers(int(hours_left // 24))} روز مانده"
+
+                self.urgent_text = f"⏳ نزدیک‌ترین موعد تحویل: «{title}» ({time_desc})"
+        except Exception:
+            pass
+
+    def _on_status_clicked(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.urgent_project_id:
+            global_signals.navigate_and_focus_project.emit(self.urgent_project_id)
 
     def update_all(self):
         now = datetime.now()
+        settings = SettingsManager.load_settings()
+        editor_name = settings.get("editor_name", "").strip() or "تدوین‌گر گرامی"
+
+        self.lbl_greeting.setText(f"خوش‌آمدید، {editor_name}")
+
         today_j = jdatetime.date.today()
-        self._last_day_key = (now.year, now.month, now.day)
+        date_str = get_persian_date_readable(today_j)
+        shift_str = self._get_shift_label(now.hour)
+        self.lbl_date_shift.setText(f"{date_str}   •   {shift_str}")
 
-        self.current_season = self._get_current_season()
+        self._scan_deadlines()
 
-        greeting_period, mood_tag = self._get_time_greeting(now.hour)
-        self._last_greeting_key = f"{greeting_period}_{now.hour}_{self.current_season}"
+        if self.urgent_text:
+            self.lbl_pipeline_status.setText(self.urgent_text)
+            self.lbl_pipeline_status.setStyleSheet("""
+                QLabel {
+                    font-family: 'Vazirmatn';
+                    font-size: 11px;
+                    font-weight: 700;
+                    color: #FB923C;
+                    background: transparent;
+                    border: none;
+                }
+                QLabel:hover {
+                    color: #FDBA74;
+                }
+            """)
+            self.lbl_pipeline_status.setToolTip("کلیک برای هدایت مستقیم به پرونده این پروژه")
+        else:
+            self.lbl_pipeline_status.setText("✦  پایپ‌لاین پروژه‌ها در وضعیت منظم و پایدار قرار دارد")
+            self.lbl_pipeline_status.setStyleSheet("""
+                QLabel {
+                    font-family: 'Vazirmatn';
+                    font-size: 11px;
+                    font-weight: 500;
+                    color: #64748B;
+                    background: transparent;
+                    border: none;
+                }
+            """)
+            self.lbl_pipeline_status.setToolTip("")
 
-        self._refresh_greeting_text()
-
-        self.current_quote_idx = (today_j.day - 1) % len(EDITING_QUOTES)
-        self.lbl_quote.setText(f"« {EDITING_QUOTES[self.current_quote_idx]} »")
-        self.opacity_effect.setOpacity(1.0)
-
-        self.lbl_date.setText(get_persian_date_readable(today_j))
-
-        now_time = QTime.currentTime().toString("HH:mm:ss")
-        self.timecode_widget.set_time_string(now_time, animated=False)
+        self._tick()
         self.update()

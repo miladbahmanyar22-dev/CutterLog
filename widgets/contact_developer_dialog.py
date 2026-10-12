@@ -1,6 +1,7 @@
 # ==================================================
 # FILE: widgets/contact_developer_dialog.py
 # ==================================================
+import sys
 from pathlib import Path
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, 
@@ -15,25 +16,40 @@ from widgets.studio_dialog_base import StudioBaseDialog
 
 
 def get_circular_avatar_pixmap(size: int = 68) -> QPixmap:
-    """برش پرتره با فوکوس دقیق بر چهره و پشتیبانی از پکیج‌های چندسکویی"""
-    candidate_paths = [
-        get_asset_path("developer.jpg"),
-        get_asset_path("developer.png"),
-        get_asset_path("assets/developer.jpg"),
-        get_asset_path("assets/developer.png"),
-        get_asset_path("assets/images/developer.jpg"),
-        get_bundle_dir() / "developer.jpg",
-        get_bundle_dir() / "assets" / "developer.jpg",
-        Path("developer.jpg"),
-        Path("assets/developer.jpg"),
-        Path(__file__).resolve().parent.parent / "assets" / "developer.jpg",
+    """برش پرتره با فوکوس دقیق بر چهره و سازگاری کامل با خروجی نصبی PyInstaller"""
+    candidate_dirs = [
+        get_bundle_dir(),
+        get_bundle_dir() / "assets",
+        get_bundle_dir() / "assets" / "images",
+        Path(__file__).resolve().parent.parent,
+        Path(__file__).resolve().parent.parent / "assets",
+        Path(__file__).resolve().parent.parent / "assets" / "images",
+        Path.cwd(),
+        Path.cwd() / "assets",
     ]
-    
+    if getattr(sys, "frozen", False):
+        candidate_dirs.append(Path(sys.executable).parent)
+        candidate_dirs.append(Path(sys.executable).parent / "assets")
+        if hasattr(sys, "_MEIPASS"):
+            candidate_dirs.append(Path(sys._MEIPASS))
+            candidate_dirs.append(Path(sys._MEIPASS) / "assets")
+
+    image_names = [
+        "developer.jpg", "developer.png", "developer.jpeg", "developer.webp",
+        "dev.jpg", "dev.png", "avatar.jpg", "avatar.png"
+    ]
+
     img_path = None
-    for p in candidate_paths:
+    for folder in candidate_dirs:
         try:
-            if p.exists() and p.is_file():
-                img_path = p
+            if not folder.exists():
+                continue
+            for name in image_names:
+                candidate = folder / name
+                if candidate.exists() and candidate.is_file():
+                    img_path = candidate
+                    break
+            if img_path:
                 break
         except Exception:
             continue
@@ -76,7 +92,7 @@ def get_circular_avatar_pixmap(size: int = 68) -> QPixmap:
             painter.drawPixmap(int(draw_rect.x()), int(draw_rect.y()), scaled)
 
             painter.setClipping(False)
-            painter.setPen(QPen(QColor(99, 102, 241, 80), 1.2))
+            painter.setPen(QPen(QColor(99, 102, 241, 90), 1.4))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawEllipse(draw_rect)
             painter.end()
@@ -151,7 +167,6 @@ class ContactDeveloperDialog(StudioBaseDialog):
     def init_ui(self):
         self.build_header("ارتباط با طراح و توسعه‌دهنده", "CUTTERLOG PRO", icon_name="message", icon_color="#6366F1")
 
-        # کارت معرفی
         header_card = QFrame()
         header_card.setStyleSheet("""
             background-color: #121826;
@@ -181,12 +196,10 @@ class ContactDeveloperDialog(StudioBaseDialog):
 
         self.container_layout.addWidget(header_card)
 
-        # راه‌های ارتباطی
         self.container_layout.addWidget(ContactActionRow("پیام‌رسان تلگرام", "@MiladBahmanyar", "telegram", "#38BDF8", "https://t.me/MiladBahmanyar"))
         self.container_layout.addWidget(ContactActionRow("صفحه اینستاگرام", "@MiladBahmanyar", "instagram", "#FB923C", "https://instagram.com/MiladBahmanyar"))
         self.container_layout.addWidget(ContactActionRow("پست الکترونیکی", "MiladBahmanyar@hotmail.com", "mail", "#10B981", "mailto:MiladBahmanyar@hotmail.com"))
 
-        # دکمه بستن
         btn_box = QHBoxLayout()
         btn_box.addStretch()
         btn_close = QPushButton("بستن")
