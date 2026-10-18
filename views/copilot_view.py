@@ -219,7 +219,7 @@ class TodayOverviewBar(QFrame):
         super().__init__(parent)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setFixedHeight(68)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Fixed)
         self.setStyleSheet("""
             QFrame#TodayOverviewCard {
                 background-color: #121826;
@@ -245,7 +245,7 @@ class TodayOverviewBar(QFrame):
         self.lbl_greeting.setStyleSheet("font-size: 14px; font-weight: 800; color: #F8FAFC;")
         greeting_col.addWidget(self.lbl_greeting)
 
-        self.lbl_attention = QLabel("امروز ۲ موضوع مهم نیازمند اقدام فوری شماست.")
+        self.lbl_attention = QLabel("امروز وضعیت پایپ‌لاین در حال ارزیابی است.")
         self.lbl_attention.setStyleSheet("font-size: 11px; color: #94A3B8;")
         greeting_col.addWidget(self.lbl_attention)
 
@@ -467,7 +467,7 @@ class SmartPriorityItemRow(QFrame):
         super().__init__(parent)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setFixedHeight(52)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Fixed)
         self.setStyleSheet("""
             QFrame#PriorityRow {
                 background-color: #131927;
@@ -875,7 +875,6 @@ class TodayInsightsCompactGrid(QFrame):
         top_row.addWidget(lbl_t)
         top_row.addStretch()
 
-        # کپسول هوشمند وضعیت یادداشت
         self.btn_quick_note = QPushButton()
         self.btn_quick_note.setFixedHeight(26)
         self.btn_quick_note.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -890,9 +889,9 @@ class TodayInsightsCompactGrid(QFrame):
         self.grid.setVerticalSpacing(8)
 
         self.cell_time = self._create_tile("زمان خالص تدوین", "۰:۰۰", "#10B981")
-        self.cell_peak = self._create_tile("ساعات اوج سرعت", "۱۶ تا ۱۹", "#818CF8")
+        self.cell_peak = self._create_tile("ساعات اوج سرعت", "نیازمند ثبت جلسات", "#818CF8")
         self.cell_debts = self._create_tile("مطالبات وصول‌نشده", "۰ تومان", "#F59E0B")
-        self.cell_pace = self._create_tile("پایپ‌لاین هفتگی", "تارگت ۳۶ ساعت", "#38BDF8")
+        self.cell_pace = self._create_tile("پایپ‌لاین هفتگی", "۰ از ۳۶ ساعت", "#38BDF8")
 
         self.grid.addWidget(self.cell_time["frame"], 0, 0)
         self.grid.addWidget(self.cell_peak["frame"], 0, 1)
@@ -902,12 +901,10 @@ class TodayInsightsCompactGrid(QFrame):
         layout.addLayout(self.grid)
 
     def refresh_note_status(self):
-        """بررسی خودکار وضعیت یادداشت و تغییر ظاهر دکمه"""
         settings = SettingsManager.load_settings()
         note_text = settings.get("copilot_scratchpad_text", "").strip()
 
         if note_text:
-            # حالت دارای یادداشت: سبز نئونی با نقطه درخشان و نمایش پیش‌نمایش در تول‌تیپ
             self.btn_quick_note.setText("● یادداشت فعال")
             first_line = note_text.split("\n")[0][:45]
             preview = f"{first_line}..." if len(note_text) > 45 else first_line
@@ -929,7 +926,6 @@ class TodayInsightsCompactGrid(QFrame):
                 }
             """)
         else:
-            # حالت خالی: خاکستری آماده ثبت
             self.btn_quick_note.setText("+ یادداشت سریع")
             self.btn_quick_note.setToolTip("میز کار خالی است. برای ثبت یادداشت یا تایم‌کد کلیک کنید.")
             self.btn_quick_note.setStyleSheet("""
@@ -1222,11 +1218,13 @@ class CopilotView(QWidget):
         settings = SettingsManager.load_settings()
         editor_name = settings.get("editor_name") or "میلاد"
 
+        # واکشی داده‌های واقعی از هسته
         prod = CopilotEngine.get_productivity_insights(days_back=14)
         radar = CopilotEngine.get_pipeline_radar()
         rec_proj = CopilotEngine.recommend_next_project()
         fin_data = FinanceController.get_financial_dashboard_data()
         scores = CopilotEngine.get_studio_credit_scores()
+        weekly = CopilotEngine.get_weekly_performance_summary()
         active_projects = ProjectController.get_active_projects()
 
         now = datetime.now()
@@ -1249,7 +1247,12 @@ class CopilotView(QWidget):
         time_str = f"{t_h:02d}:{t_m:02d}"
 
         risks_cnt = radar.get("total_risks_count", 0)
-        attention_text = f"امروز {to_persian_numbers(risks_cnt)} موضوع نیازمند توجه است." if risks_cnt > 0 else "پایپ‌لاین در سلامت کامل و بدون ریسک قرار دارد"
+        if risks_cnt > 0:
+            attention_text = f"امروز {to_persian_numbers(risks_cnt)} موضوع نیازمند اقدام فوری یا پیگیری است."
+        elif rec_proj:
+            attention_text = f"پروژه «{rec_proj['title']}» در نوبت کار قرار دارد."
+        else:
+            attention_text = "پایپ‌لاین در سلامت کامل است و پروژه اضطراری وجود ندارد."
 
         self.overview_bar.update_metrics(
             editor_name=editor_name,
@@ -1265,9 +1268,13 @@ class CopilotView(QWidget):
             why_list = [
                 f"استودیو: {rec_proj['studio_name']}",
                 f"پیشرفت کلیپ‌ها: {to_persian_numbers(rec_proj['progress_pct'])}٪",
-                f"موعد تحویل: {to_persian_numbers(rec_proj['deadline_str'])}",
-                "ساعت طلایی بازدهی تدوینگر در حال حاضر فعال است"
+                f"موعد تحویل: {to_persian_numbers(rec_proj['deadline_str'])}"
             ]
+            if prod.get("has_data"):
+                if prod.get("is_currently_golden", False):
+                    why_list.append("ساعت طلایی بازدهی تدوینگر در حال حاضر فعال است ✓")
+                else:
+                    why_list.append(f"ساعت طلایی بازدهی: {prod.get('golden_hours_label')}")
             self.main_copilot.set_content(rec_proj["project_id"], insight, why_list)
         else:
             self.main_copilot.set_content(
@@ -1297,15 +1304,18 @@ class CopilotView(QWidget):
             }
         }
 
+        # ۱. اولویت اول ددلاین بحرانی
         if radar.get("urgent_deadlines"):
             u = radar["urgent_deadlines"][0]
+            tag_name = "تأخیر" if u.get("days_left", 0) < 0 else "فوری"
             p_list.append({
-                "rank": f"{rank_idx:02d}", "tag": "فوری", "title": f"ددلاین «{u['title']}»",
+                "rank": f"{rank_idx:02d}", "tag": tag_name, "title": f"ددلاین «{u['title']}»",
                 "reason": u["warning"], "action_label": "مشاهده پروژه", "tag_style": tag_styles["urgent"],
                 "callback": lambda pid=u["id"]: global_signals.navigate_and_focus_project.emit(pid)
             })
             rank_idx += 1
 
+        # ۲. اولویت تدوین بعدی
         if rec_proj:
             p_list.append({
                 "rank": f"{rank_idx:02d}", "tag": "تدوین", "title": f"ادامه راش‌های «{rec_proj['title']}»",
@@ -1314,30 +1324,36 @@ class CopilotView(QWidget):
             })
             rank_idx += 1
 
+        # ۳. اولویت مطالبات استودیوهای پرخطر
         if total_remaining > 0 and scores:
             bad_client = scores[0]
-            p_list.append({
-                "rank": f"{rank_idx:02d}", "tag": "مالی", "title": f"تسویه مطالبات {bad_client['studio_name']}",
-                "reason": f"مانده حساب: {format_toman(bad_client['remaining'])}", "action_label": "دفتر مالی", "tag_style": tag_styles["finance"],
-                "callback": lambda: global_signals.navigate_to_page.emit(3)
-            })
-            rank_idx += 1
+            if bad_client.get("remaining", 0) > 0:
+                p_list.append({
+                    "rank": f"{rank_idx:02d}", "tag": "مالی", "title": f"تسویه مطالبات {bad_client['studio_name']}",
+                    "reason": f"مانده حساب: {format_toman(bad_client['remaining'])}", "action_label": "دفتر مالی", "tag_style": tag_styles["finance"],
+                    "callback": lambda: global_signals.navigate_to_page.emit(3)
+                })
+                rank_idx += 1
 
         self.priorities_card.set_priorities(p_list)
 
+        # کارت وضعیت کابین پروژه فعال
         if active_projects:
             active_p = active_projects[0]
             self.cockpit_card.set_project_data(active_p)
         else:
             self.cockpit_card.set_project_data(None)
 
-        peak = prod.get("golden_hours_label", "۱۶ تا ۱۹")
-        debt_str = format_toman(total_remaining) if total_remaining > 0 else "حساب‌ها تسویه شده"
+        # به‌روزرسانی بینش‌های مدیریتی با داده‌های واقعی
+        peak = prod.get("golden_hours_label", "نیازمند ثبت جلسات")
+        debt_str = format_toman(total_remaining) if total_remaining > 0 else "حساب‌ها تسویه است"
+        weekly_summary_str = weekly.get("summary_text", "۰ از ۳۶ ساعت")
+
         self.insights_grid.update_insights(
             active_hms=f"{t_h} ساعت و {t_m} دقیقه",
             peak_hours=peak,
             uncollected_toman=debt_str,
-            weekly_summary="۳۶ ساعت هفتگی"
+            weekly_summary=weekly_summary_str
         )
 
         try:

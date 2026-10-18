@@ -4,7 +4,7 @@
 import re
 from typing import List, Tuple
 from PySide6.QtWidgets import (
-    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QSizePolicy, QGridLayout, QWidget
+    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QSizePolicy, QWidget
 )
 from PySide6.QtCore import Qt, Signal, QRectF, QPointF
 from PySide6.QtGui import (
@@ -12,14 +12,12 @@ from PySide6.QtGui import (
 )
 
 from core.copilot_engine import CopilotEngine
-from core.project_controller import ProjectController
-from core.finance_controller import FinanceController
-from core.persian_utils import format_toman, to_persian_numbers
 
 
 class CopilotBriefingCard(QFrame):
     """
-    کارت بریف هوشمند میز کار با چیدمان گرید و متن‌های چپ‌چین
+    کارت بریف هوشمند میز کار با چیدمان خطی یکپارچه و استاندارد راست‌به‌چپ (RTL)
+    بدون فاصله ناخواسته بین عنوان و متن
     """
     open_insights_requested = Signal()
 
@@ -78,137 +76,87 @@ class CopilotBriefingCard(QFrame):
         top_row.addWidget(lbl_live_badge)
         layout.addLayout(top_row)
 
-        # گرید ستونی برای چیدمان اطلاعات
-        self.grid_container = QGridLayout()
-        self.grid_container.setContentsMargins(0, 2, 0, 0)
-        self.grid_container.setHorizontalSpacing(4)
-        self.grid_container.setVerticalSpacing(4)
-        
-        self.grid_container.setColumnStretch(0, 0)
-        self.grid_container.setColumnStretch(1, 0)
-        self.grid_container.setColumnStretch(2, 1)
-
-        layout.addLayout(self.grid_container)
+        # کانتینر ردیف‌های پیام
+        self.rows_container = QVBoxLayout()
+        self.rows_container.setContentsMargins(0, 2, 0, 0)
+        self.rows_container.setSpacing(4)
+        layout.addLayout(self.rows_container)
 
     def refresh_briefing(self):
-        # پاکسازی خانه‌های گرید قبلی
-        while self.grid_container.count():
-            item = self.grid_container.takeAt(0)
+        while self.rows_container.count():
+            item = self.rows_container.takeAt(0)
             w = item.widget()
             if w:
                 w.deleteLater()
+            elif item.layout():
+                # حذف زیرطرح‌ها در صورت وجود
+                sub_layout = item.layout()
+                while sub_layout.count():
+                    sub_item = sub_layout.takeAt(0)
+                    if sub_item.widget():
+                        sub_item.widget().deleteLater()
 
-        # استخراج داده‌های زنده و واقعی
-        radar = CopilotEngine.get_pipeline_radar()
-        rec_proj = CopilotEngine.recommend_next_project()
-        fin_data = FinanceController.get_financial_dashboard_data(date_range_key="all")
-        active_projects = ProjectController.get_active_projects()
+        # دریافت داده‌ها از موتور کوپایلوت
+        briefing = CopilotEngine.generate_daily_briefing()
 
-        rows_spec: List[Tuple[str, str, str]] = []
+        rows_spec: List[Tuple[str, str, str]] = [
+            ("اولویت اقدام", "#818CF8", briefing["line_action"]),
+            ("زمان‌‌بندی", briefing.get("timeline_color", "#38BDF8"), briefing["line_timeline"]),
+            ("وضعیت مالی", briefing.get("finance_color", "#34D399"), briefing["line_finance"])
+        ]
 
-        # ۱. خط اول: تدوین و اقدام
-        if rec_proj:
-            line_1 = f"پیشنهاد تدوین «{rec_proj['title']}» ({rec_proj['recommendation_reason']})"
-        elif active_projects:
-            p_top = active_projects[0]
-            c_cnt, t_cnt, pct = ProjectController.calculate_project_progress(p_top)
-            line_1 = f"پروژه فعال «{p_top.couple_names or p_top.title}» ({to_persian_numbers(pct)}٪ پیشرفت)"
-        else:
-            line_1 = "تمامی پروژه‌های فعال تکمیل شده‌اند و پایپ‌لاین آزاد است."
-        rows_spec.append(("اولویت اقدام", "#818CF8", self._apply_inline_accents(line_1)))
+        for label_text, color_hex, text_content in rows_spec:
+            row_layout = QHBoxLayout()
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(5)
+            row_layout.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-        # ۲. خط دوم: رادار زمان و ددلاین
-        if radar.get("urgent_deadlines"):
-            risk = radar["urgent_deadlines"][0]
-            line_2 = f"ددلاین فوری «{risk['title']}» ({risk['warning']})"
-            tag_color = "#38BDF8"
-        elif radar.get("pending_review_alerts"):
-            alert = radar["pending_review_alerts"][0]
-            line_2 = f"یادآوری بازبینی «{alert['title']}» ({alert['notice']})"
-            tag_color = "#38BDF8"
-        elif radar.get("heavy_revisions"):
-            rev = radar["heavy_revisions"][0]
-            line_2 = f"اصلاحیه فعال «{rev['title']}» ({rev['notice']})"
-            tag_color = "#38BDF8"
-        else:
-            line_2 = "زمان‌بندی پایدار است و هیچ سررسید بحرانی ثبت نشده است."
-            tag_color = "#38BDF8"
-        rows_spec.append(("زمان‌‌بندی", tag_color, self._apply_inline_accents(line_2)))
-
-        # ۳. خط سوم: مطالبات مالی
-        cards = fin_data.get("summary_cards", {})
-        total_remaining = cards.get("total_remaining", 0)
-        unsettled_count = cards.get("unsettled_count", 0)
-
-        if total_remaining > 0:
-            line_3 = f"مطالبات وصول‌نشده {format_toman(total_remaining)} ({to_persian_numbers(unsettled_count)} پروژه)"
-            fin_tag_color = "#34D399"
-        else:
-            line_3 = "حساب تمامی پروژه‌های تحویل‌شده تسویه است."
-            fin_tag_color = "#34D399"
-        rows_spec.append(("وضعیت مالی", fin_tag_color, self._apply_inline_accents(line_3)))
-
-        # قرار دادن ردیف‌ها در گرید با متن‌های چپ‌چین
-        for row_idx, (label_text, color_hex, text_html) in enumerate(rows_spec):
-            # ستون ۰: برچسب عنوان با عرض ثابت
-            lbl_tag = QLabel(label_text)
-            lbl_tag.setFixedWidth(66)
-            lbl_tag.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignAbsolute)
+            # برچسب عنوان ثابت
+            lbl_tag = QLabel(f"{label_text}:")
+            lbl_tag.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
             lbl_tag.setStyleSheet(f"""
                 QLabel {{
                     font-family: 'Vazirmatn';
                     font-size: 11px;
-                    font-weight: 700;
+                    font-weight: 800;
                     color: {color_hex};
                     background: transparent;
                     border: none;
                 }}
             """)
-            self.grid_container.addWidget(lbl_tag, row_idx, 0)
+            row_layout.addWidget(lbl_tag)
 
-            # ستون ۱: دونقطه
-            lbl_colon = QLabel(":")
-            lbl_colon.setFixedWidth(8)
-            lbl_colon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl_colon.setStyleSheet("""
-                QLabel {
-                    font-family: 'Vazirmatn';
-                    font-size: 11.5px;
-                    font-weight: 700;
-                    color: #64748B;
-                    background: transparent;
-                    border: none;
-                }
-            """)
-            self.grid_container.addWidget(lbl_colon, row_idx, 1)
-
-            # ستون ۲: متن اطلاعات با چپ‌چین‌سازی کامل (direction: ltr و text-align: left)
+            # متن اصلی پیام که بلافاصله بعد از دونقطه قرار می‌گیرد
+            formatted_text = self._apply_inline_accents(text_content)
             lbl_msg = QLabel()
+            lbl_msg.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
             lbl_msg.setTextFormat(Qt.TextFormat.RichText)
-            lbl_msg.setWordWrap(False)
-            lbl_msg.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignAbsolute)
             lbl_msg.setStyleSheet("""
                 QLabel {
                     font-family: 'Vazirmatn';
                     font-size: 11px;
-                    color: #94A3B8;
+                    color: #CBD5E1;
                     background: transparent;
                     border: none;
                 }
             """)
-            # اعمال جهت LTR و چپ‌چین برای متن‌ها
-            lbl_msg.setText(f"<div style='direction: ltr; text-align: left;'>{text_html}</div>")
-            self.grid_container.addWidget(lbl_msg, row_idx, 2)
+            lbl_msg.setText(formatted_text)
+            row_layout.addWidget(lbl_msg)
+
+            # فاصله خالی به سمت چپ فرستاده می‌شود تا کل ردیف به راست فشرده و مرتب باشد
+            row_layout.addStretch(1)
+
+            self.rows_container.addLayout(row_layout)
 
     def _apply_inline_accents(self, text_str: str) -> str:
         text_str = re.sub(
             r"«(.*?)»",
-            r"<b style='color: #F8FAFC;'>«\1»</b>",
+            r'<b style="color: #F8FAFC;">«\1»</b>',
             text_str
         )
         text_str = re.sub(
             r"\((.*?)\)",
-            r"<span style='color: #A5B4FC;'>(\1)</span>",
+            r'<span style="color: #A5B4FC;">(\1)</span>',
             text_str
         )
         return text_str

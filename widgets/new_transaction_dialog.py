@@ -368,7 +368,8 @@ class NewTransactionDialog(StudioBaseDialog):
                 total_amount=amount,
                 payment_type=pay_type,
                 notes=note,
-                tracking_code=tracking
+                tracking_code=tracking,
+                target_project_id=None
             )
             global_signals.transaction_recorded.emit(0)
             global_signals.client_balance_updated.emit(client_id)
@@ -380,26 +381,15 @@ class NewTransactionDialog(StudioBaseDialog):
                 return
             project_id, client_id = proj_data
 
-            with db.get_session() as session:
-                trx = Transaction(
-                    project_id=project_id,
-                    client_id=client_id,
-                    amount=amount,
-                    payment_type=pay_type,
-                    notes=note,
-                    tracking_code=tracking or None,
-                    paid_at=datetime.utcnow()
-                )
-                session.add(trx)
-                ProjectController.log_event(
-                    session, project_id, "TRANSACTION_ADDED", 
-                    f"دریافت مبلغ {format_toman(amount)}", 
-                    f"شماره پیگیری: {tracking or '-'} | {note or 'واریز ثبت شد.'}"
-                )
-                session.commit()
-                trx_id = trx.id
-
-            global_signals.transaction_recorded.emit(trx_id)
+            FinanceController.allocate_client_payment(
+                client_id=client_id,
+                total_amount=amount,
+                payment_type=pay_type,
+                notes=note,
+                tracking_code=tracking,
+                target_project_id=project_id
+            )
+            global_signals.transaction_recorded.emit(0)
             global_signals.project_updated.emit(project_id)
             if client_id:
                 global_signals.client_balance_updated.emit(client_id)

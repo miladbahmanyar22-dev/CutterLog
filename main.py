@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QIcon
 
 from config import get_asset_path
+from core.icon_provider import IconProvider
 from core.font_manager import FontManager
 from core.app_setup import initialize_application
 from views.main_window import MainWindow
@@ -96,8 +97,44 @@ def bootstrap_app():
         except Exception as e:
             print(f"QSS load notice for {qss_p}: {e}")
 
-    # ادغام با استایل اختصاصی QMenu
-    app.setStyleSheet(loaded_qss + "\n" + GLOBAL_QMENU_STYLE)
+    # بارگذاری مسیر فیزیکی آیکون تیک سفید برای رندر قطعی در کیوت
+    chk_icon_url = IconProvider.get_checkbox_checked_icon_path()
+    global_checkbox_style = f"""
+    QCheckBox {{
+        font-family: 'Vazirmatn';
+        color: #F8FAFC;
+        font-size: 11.5px;
+        spacing: 8px;
+        background: transparent;
+        border: none;
+    }}
+
+    QCheckBox::indicator {{
+        width: 18px;
+        height: 18px;
+        background-color: #161F30;
+        border: 1.5px solid rgba(255, 255, 255, 0.22);
+        border-radius: 4px;
+    }}
+
+    QCheckBox::indicator:hover {{
+        border-color: #818CF8;
+        background-color: #1E283D;
+    }}
+
+    QCheckBox::indicator:checked {{
+        background-color: #6366F1;
+        border: 1.5px solid #818CF8;
+        image: url("{chk_icon_url}");
+    }}
+
+    QCheckBox::indicator:disabled {{
+        background-color: #0E131F;
+        border-color: rgba(255, 255, 255, 0.08);
+    }}
+    """
+
+    app.setStyleSheet(loaded_qss + "\n" + GLOBAL_QMENU_STYLE + "\n" + global_checkbox_style)
 
     window = MainWindow()
     window.show()

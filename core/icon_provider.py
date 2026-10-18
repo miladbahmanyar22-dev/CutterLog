@@ -1,9 +1,11 @@
 # ==================================================
 # FILE: core/icon_provider.py
 # ==================================================
+from pathlib import Path
 from PySide6.QtGui import QIcon, QPixmap, QPainter
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtCore import QByteArray, QSize, Qt
+from config import APP_DATA_DIR
 
 
 class IconProvider:
@@ -123,11 +125,21 @@ class IconProvider:
     }
 
     @classmethod
+    def get_checkbox_checked_icon_path(cls) -> str:
+        """
+        تولید و بازگردانی مسیر فایل تصویری علامت تیک سفید برای رندر قطعی در QSS کیوت
+        """
+        icon_path = APP_DATA_DIR / "chk_white.png"
+        if not icon_path.exists():
+            pix = cls.get_pixmap("check", color="#FFFFFF", size=14, stroke_width=3.4)
+            pix.save(str(icon_path), "PNG")
+        return str(icon_path.resolve()).replace("\\", "/")
+
+    @classmethod
     def get_pixmap(cls, key: str, color: str = "#818CF8", size: int = 18, stroke_width: float = 2.0, **kwargs) -> QPixmap:
         """رندر و برگرداندن QPixmap با کیفیت وکتور"""
         svg_xml = cls.SVG_TEMPLATES.get(key)
         if not svg_xml:
-            # فال‌بک تمیز به شکل لوزی نقطه‌ای به جای دایره خام
             svg_xml = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="{stroke_width}"><polygon points="12 2 22 12 12 22 2 12"></polygon></svg>"""
 
         formatted_svg = svg_xml.replace("{color}", color).replace("{stroke_width}", str(stroke_width))

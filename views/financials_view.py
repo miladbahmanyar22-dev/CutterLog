@@ -171,7 +171,7 @@ class StudioLedgerCard(QFrame):
         self._apply_style()
 
     def _open_invoice(self, client_id: int):
-        diag = StudioInvoiceDialog(client_id, self.window())
+        diag = StudioInvoiceDialog(client_id, parent=self.window())
         diag.exec()
 
     def _create_v_divider(self) -> QFrame:
@@ -196,11 +196,12 @@ class StudioLedgerCard(QFrame):
 
 
 class ReceivableProjectCard(QFrame):
-    """کارت مدرن پروژه‌های دارای مانده بدهی"""
-    def __init__(self, item_data: Dict[str, Any], on_pay_callback, parent=None):
+    """کارت مدرن پروژه‌های دارای مانده بدهی با دسترسی به ثبت واریزی و فاکتور مستقل"""
+    def __init__(self, item_data: Dict[str, Any], on_pay_callback, on_invoice_callback, parent=None):
         super().__init__(parent)
         self.item_data = item_data
         self.on_pay_callback = on_pay_callback
+        self.on_invoice_callback = on_invoice_callback
         
         self.setObjectName("FinancialCardItem")
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -259,6 +260,34 @@ class ReceivableProjectCard(QFrame):
         rem_col.addWidget(lbl_hint)
         layout.addLayout(rem_col, stretch=2)
 
+        # دکمه‌های فاکتور تک‌پروژه و ثبت واریزی
+        btn_box = QHBoxLayout()
+        btn_box.setSpacing(6)
+
+        proj_id = self.item_data.get("project_id", 0)
+
+        btn_invoice = QPushButton("فاکتور 📄")
+        btn_invoice.setFixedHeight(36)
+        btn_invoice.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_invoice.setStyleSheet("""
+            QPushButton {
+                font-family: 'Vazirmatn';
+                background-color: #1E283D;
+                color: #F8FAFC;
+                font-weight: 600;
+                font-size: 11.5px;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 7px;
+                padding: 0 12px;
+            }
+            QPushButton:hover {
+                border-color: #6366F1;
+                background-color: #242E42;
+            }
+        """)
+        btn_invoice.clicked.connect(lambda: self.on_invoice_callback(proj_id))
+        btn_box.addWidget(btn_invoice)
+
         btn_pay = QPushButton("ثبت واریزی 💵")
         btn_pay.setFixedHeight(36)
         btn_pay.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -275,10 +304,10 @@ class ReceivableProjectCard(QFrame):
             }
             QPushButton:hover { background-color: #059669; }
         """)
-        proj_id = self.item_data.get("project_id", 0)
         btn_pay.clicked.connect(lambda: self.on_pay_callback(proj_id))
-        layout.addWidget(btn_pay)
+        btn_box.addWidget(btn_pay)
 
+        layout.addLayout(btn_box)
         self._apply_style()
 
     def _create_v_divider(self) -> QFrame:
@@ -380,7 +409,6 @@ class TransactionLedgerCard(QFrame):
         lbl_amt.setStyleSheet("font-family: 'Vazirmatn'; font-size: 15px; font-weight: 800; color: #10B981; border: none; background: transparent;")
         layout.addWidget(lbl_amt)
 
-        # دکمه حذف تراکنش اشتباه
         btn_del = QPushButton()
         btn_del.setIcon(IconProvider.get_icon("trash", "#EF4444", size=13))
         btn_del.setFixedSize(28, 28)
@@ -509,7 +537,6 @@ class FinancialsView(QWidget):
         info_col.addWidget(subtitle)
         header_layout.addLayout(info_col, stretch=1)
 
-        # دکمه ثبت واریز جدید
         btn_new_pay = QPushButton("ثبت دریافت وجه / تسویه")
         btn_new_pay.setIcon(IconProvider.get_icon("dollar", "#FFFFFF", size=15))
         btn_new_pay.setIconSize(QSize(15, 15))
@@ -532,7 +559,6 @@ class FinancialsView(QWidget):
         btn_new_pay.clicked.connect(lambda: self._open_new_transaction_dialog())
         header_layout.addWidget(btn_new_pay)
 
-        # دکمه خروجی اکسل
         btn_export = QPushButton("خروجی اکسل")
         btn_export.setIcon(IconProvider.get_icon("excel", "#10B981", size=15))
         btn_export.setIconSize(QSize(15, 15))
@@ -831,7 +857,11 @@ class FinancialsView(QWidget):
             return
 
         for r in receivables:
-            card = ReceivableProjectCard(r, on_pay_callback=self._open_payment_for_project)
+            card = ReceivableProjectCard(
+                r, 
+                on_pay_callback=self._open_payment_for_project,
+                on_invoice_callback=self._open_invoice_for_project
+            )
             self.receivables_layout.addWidget(card)
 
     def _render_transactions_cards(self, transactions: List[dict]):
@@ -892,6 +922,12 @@ class FinancialsView(QWidget):
     def _open_payment_for_project(self, project_id: int):
         diag = NewTransactionDialog(target_project_id=project_id, target_client_id=None, parent=self.window())
         diag.exec()
+
+    def _open_invoice_for_project(self, project_id: int):
+        project = ProjectController.get_project_by_id(project_id)
+        if project and project.client_id:
+            diag = StudioInvoiceDialog(project.client_id, initial_project_id=project_id, parent=self.window())
+            diag.exec()
 
     def _export_excel(self):
         file_path, _ = QFileDialog.getSaveFileName(

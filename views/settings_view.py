@@ -2,6 +2,7 @@
 # FILE: views/settings_view.py
 # ================================================== 
 import os
+import shutil
 from pathlib import Path
 from typing import Dict, List, Optional
 from PySide6.QtWidgets import (
@@ -25,6 +26,7 @@ from core.persian_utils import format_toman, normalize_to_english_digits, to_per
 from widgets.custom_inputs import ModernNumberStepper
 from widgets.studio_dialog_base import StudioBaseDialog, StudioConfirmDialog
 from widgets.support_dialog import SupportDeveloperDialog
+from widgets.purge_center_widget import PurgeCenterWidget
 from views.about_view import AboutView
 
 
@@ -472,9 +474,6 @@ class SettingsView(QWidget):
 
         sidebar_layout.addStretch()
 
-        # ========================================================
-        # دکمه چشم‌گیر و متمایز حمایت مالی (Donate Button) در پایین سایدبار
-        # ========================================================
         btn_donate = QPushButton("☕ حمایت از توسعه دهنده")
         btn_donate.setFixedHeight(38)
         btn_donate.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -522,6 +521,8 @@ class SettingsView(QWidget):
         self.pages_stack.setCurrentIndex(index)
         for i, btn in enumerate(self.nav_buttons):
             btn.setChecked(i == index)
+        if index == 4 and hasattr(self, "purge_center") and self.purge_center:
+            self.purge_center.refresh_metrics()
 
     def _persist_settings(self):
         SettingsManager.save_settings(self.settings)
@@ -930,97 +931,387 @@ class SettingsView(QWidget):
         global_signals.show_toast.emit("مهر/امضای دیجیتال حذف گردید.", "info")
 
     def _build_security_data_tab(self) -> QWidget:
+        """
+        بازطراحی پیشرفته و استودیویی بخش ایمنی، مسیرها و نسخه‌برداری
+        الهام‌گرفته از استایل گلس‌مورفیک مرکز پاک‌سازی
+        """
         scroll = self._create_scrollable_container()
         container = scroll.widget()
         layout = container.layout()
+        layout.setSpacing(12)
 
-        card_paths = SettingsSectionCard("مسیرهای ذخیره‌سازی هارد و پایپ‌لاین", "تنظیم هارد پیش‌فرض راش‌ها و رفتار آرشیو موزیک استودیو")
+        chk_path = IconProvider.get_checkbox_checked_icon_path()
 
-        path_box = QHBoxLayout()
-        path_box.setSpacing(8)
+        # ۱. بنر وضعیت سلامت مخزن داده (Vault & Data Health Slate)
+        health_banner = QFrame()
+        health_banner.setFixedHeight(68)
+        health_banner.setStyleSheet("""
+            QFrame {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #091220, stop:0.5 #0F1D32, stop:1 #091220);
+                border: 1px solid rgba(56, 189, 248, 0.35);
+                border-radius: 9px;
+            }
+            QLabel { background: transparent; border: none; font-family: 'Vazirmatn'; }
+        """)
+        hb_lay = QHBoxLayout(health_banner)
+        hb_lay.setContentsMargins(16, 0, 16, 0)
+        hb_lay.setSpacing(12)
+        hb_lay.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        hb_icon_frame = QFrame()
+        hb_icon_frame.setFixedSize(36, 36)
+        hb_icon_frame.setStyleSheet("background-color: rgba(56, 189, 248, 0.14); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 7px;")
+        hb_if_lay = QVBoxLayout(hb_icon_frame)
+        hb_if_lay.setContentsMargins(0, 0, 0, 0)
+        hb_if_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hb_icon = QLabel()
+        hb_icon.setPixmap(IconProvider.get_pixmap("shield_check", "#38BDF8", size=17))
+        hb_if_lay.addWidget(hb_icon)
+        hb_lay.addWidget(hb_icon_frame)
+
+        hb_info = QVBoxLayout()
+        hb_info.setSpacing(1)
+        hb_info.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        lbl_hb_title = QLabel("پایش یکپارچگی مسیرها و مخازن ذخیره‌سازی")
+        lbl_hb_title.setStyleSheet("font-size: 12px; font-weight: 800; color: #F8FAFC;")
+        hb_info.addWidget(lbl_hb_title)
+
+        lbl_hb_sub = QLabel("پیکربندی استانداردهای دسترسی مستقیم NLE، امنیت فایل‌ها و ذخیره‌سازی داده‌های پایپ‌لاین")
+        lbl_hb_sub.setStyleSheet("font-size: 10px; color: #94A3B8;")
+        hb_info.addWidget(lbl_hb_sub)
+        hb_lay.addLayout(hb_info, stretch=1)
+
+        badge_status = QLabel("● سیستم پایدار")
+        badge_status.setStyleSheet("""
+            QLabel {
+                font-family: 'Vazirmatn';
+                font-size: 10px;
+                font-weight: 700;
+                color: #38BDF8;
+                background-color: rgba(56, 189, 248, 0.12);
+                border: 1px solid rgba(56, 189, 248, 0.3);
+                border-radius: 5px;
+                padding: 4px 10px;
+            }
+        """)
+        hb_lay.addWidget(badge_status)
+        layout.addWidget(health_banner)
+
+        # ۲. کارت‌های تنظیم مسیرها در گرید منظم
+        paths_wrap = QFrame()
+        paths_wrap.setStyleSheet("""
+            QFrame#PathsWrapFrame {
+                background-color: #101625;
+                border: 1px solid rgba(255, 255, 255, 0.05);
+                border-radius: 10px;
+            }
+        """)
+        paths_wrap.setObjectName("PathsWrapFrame")
+        pw_lay = QVBoxLayout(paths_wrap)
+        pw_lay.setContentsMargins(14, 12, 14, 12)
+        pw_lay.setSpacing(10)
+
+        lbl_paths_head = QLabel("مسیرهای اصلی پایپ‌لاین و مخازن مدیا:")
+        lbl_paths_head.setStyleSheet("font-family: 'Vazirmatn'; font-size: 12px; font-weight: 800; color: #F8FAFC; background: transparent; border: none;")
+        pw_lay.addWidget(lbl_paths_head)
+
+        paths_grid = QGridLayout()
+        paths_grid.setSpacing(10)
+        paths_grid.setColumnStretch(0, 1)
+        paths_grid.setColumnStretch(1, 1)
+
+        # کارت ۱: هارد پیش‌فرض راش‌ها
+        card_drive = QFrame()
+        card_drive.setFixedHeight(126)
+        card_drive.setStyleSheet("""
+            QFrame {
+                background-color: #121828;
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                border-radius: 8px;
+            }
+            QFrame:hover {
+                border-color: rgba(99, 102, 241, 0.35);
+                background-color: #151D30;
+            }
+        """)
+        cd_lay = QVBoxLayout(card_drive)
+        cd_lay.setContentsMargins(12, 10, 12, 10)
+        cd_lay.setSpacing(6)
+
+        cd_top = QHBoxLayout()
+        cd_top.setSpacing(8)
+        lbl_cd_icon = QLabel()
+        lbl_cd_icon.setPixmap(IconProvider.get_pixmap("folder", "#818CF8", size=15))
+        cd_top.addWidget(lbl_cd_icon)
+        lbl_cd_title = QLabel("هارد پیش‌فرض پروژه‌ها و راش‌ها")
+        lbl_cd_title.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11.5px; font-weight: 800; color: #F8FAFC; border: none; background: transparent;")
+        cd_top.addWidget(lbl_cd_title)
+        cd_top.addStretch()
+        cd_lay.addLayout(cd_top)
+
+        lbl_cd_desc = QLabel("هنگام ثبت پروژه جدید، دیالوگ انتخاب فایل و راش‌ها از این مسیر باز می‌شود.")
+        lbl_cd_desc.setStyleSheet("font-family: 'Vazirmatn'; font-size: 9.5px; color: #8F98A8; border: none; background: transparent;")
+        cd_lay.addWidget(lbl_cd_desc)
+
+        cd_bar = QHBoxLayout()
+        cd_bar.setSpacing(6)
         self.input_default_drive = QLineEdit(self.settings.get("default_drive_path", ""))
-        self.input_default_drive.setFixedHeight(36)
-        self.input_default_drive.setFixedWidth(280)
+        self.input_default_drive.setFixedHeight(30)
         self.input_default_drive.setReadOnly(True)
-        self.input_default_drive.setStyleSheet("background-color: #161F30; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 0 10px; font-size: 11.5px; color: #94A3B8;")
-        path_box.addWidget(self.input_default_drive)
+        self.input_default_drive.setPlaceholderText("مسیری تعیین نشده...")
+        self.input_default_drive.setStyleSheet("font-family: 'Segoe UI', monospace; font-size: 10.5px; background-color: #0E1320; border: 1px solid rgba(255,255,255,0.06); border-radius: 5px; padding: 0 8px; color: #CBD5E1;")
+        cd_bar.addWidget(self.input_default_drive, stretch=1)
 
-        btn_browse = QPushButton("انتخاب هارد...")
-        btn_browse.setFixedHeight(36)
-        btn_browse.setIcon(IconProvider.get_icon("folder", "#8F909D", size=13))
-        btn_browse.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_browse.setStyleSheet("background-color: #1E283D; color: #F8FAFC; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 0 12px; font-size: 11.5px;")
-        btn_browse.clicked.connect(self._browse_default_drive)
-        path_box.addWidget(btn_browse)
-        
-        card_paths.add_setting_row(SettingRow("مسیر پیش‌فرض هارد راش‌ها و پروژه‌ها:", "هنگام تعریف پروژه جدید، دیالوگ انتخاب فایل از این مسیر باز می‌شود.", None))
-        card_paths.add_custom_layout(path_box)
+        btn_browse_drive = QPushButton("انتخاب هارد...")
+        btn_browse_drive.setFixedHeight(30)
+        btn_browse_drive.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_browse_drive.setStyleSheet("""
+            QPushButton {
+                font-family: 'Vazirmatn'; font-size: 10.5px; font-weight: 700;
+                background-color: rgba(99, 102, 241, 0.15); color: #818CF8;
+                border: 1px solid rgba(99, 102, 241, 0.35); border-radius: 5px;
+                padding: 0 10px;
+            }
+            QPushButton:hover { background-color: #6366F1; color: #FFFFFF; }
+        """)
+        btn_browse_drive.clicked.connect(self._browse_default_drive)
+        cd_bar.addWidget(btn_browse_drive)
+        cd_lay.addLayout(cd_bar)
+        paths_grid.addWidget(card_drive, 0, 0)
 
-        music_path_box = QHBoxLayout()
-        music_path_box.setSpacing(8)
+        # کارت ۲: مخزن صوتی و آرشیو موزیک
+        card_music = QFrame()
+        card_music.setFixedHeight(126)
+        card_music.setStyleSheet("""
+            QFrame {
+                background-color: #121828;
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                border-radius: 8px;
+            }
+            QFrame:hover {
+                border-color: rgba(56, 189, 248, 0.35);
+                background-color: #151D30;
+            }
+        """)
+        cm_lay = QVBoxLayout(card_music)
+        cm_lay.setContentsMargins(12, 10, 12, 10)
+        cm_lay.setSpacing(6)
+
+        cm_top = QHBoxLayout()
+        cm_top.setSpacing(8)
+        lbl_cm_icon = QLabel()
+        lbl_cm_icon.setPixmap(IconProvider.get_pixmap("music", "#38BDF8", size=15))
+        cm_top.addWidget(lbl_cm_icon)
+        lbl_cm_title = QLabel("پوشه ذخیره‌سازی آرشیو صوتی استودیو")
+        lbl_cm_title.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11.5px; font-weight: 800; color: #F8FAFC; border: none; background: transparent;")
+        cm_top.addWidget(lbl_cm_title)
+        cm_top.addStretch()
+        cm_lay.addLayout(cm_top)
+
+        lbl_cm_desc = QLabel("مسیر فیزیکی یا مجازی نگهداری فایل‌های صوتی و دسته‌بندی‌های اختصاصی.")
+        lbl_cm_desc.setStyleSheet("font-family: 'Vazirmatn'; font-size: 9.5px; color: #8F98A8; border: none; background: transparent;")
+        cm_lay.addWidget(lbl_cm_desc)
+
+        cm_bar = QHBoxLayout()
+        cm_bar.setSpacing(6)
         self.input_music_drive = QLineEdit(str(get_vault_root_dir().resolve()))
-        self.input_music_drive.setFixedHeight(36)
-        self.input_music_drive.setFixedWidth(280)
+        self.input_music_drive.setFixedHeight(30)
         self.input_music_drive.setReadOnly(True)
-        self.input_music_drive.setStyleSheet("background-color: #161F30; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 0 10px; font-size: 11.5px; color: #94A3B8;")
-        music_path_box.addWidget(self.input_music_drive)
+        self.input_music_drive.setStyleSheet("font-family: 'Segoe UI', monospace; font-size: 10.5px; background-color: #0E1320; border: 1px solid rgba(255,255,255,0.06); border-radius: 5px; padding: 0 8px; color: #CBD5E1;")
+        cm_bar.addWidget(self.input_music_drive, stretch=1)
 
-        btn_browse_music = QPushButton("انتخاب پوشه موزیک...")
-        btn_browse_music.setFixedHeight(36)
-        btn_browse_music.setIcon(IconProvider.get_icon("music", "#818CF8", size=13))
+        btn_browse_music = QPushButton("انتخاب مسیر...")
+        btn_browse_music.setFixedHeight(30)
         btn_browse_music.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_browse_music.setStyleSheet("background-color: #1E283D; color: #F8FAFC; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 0 12px; font-size: 11.5px;")
+        btn_browse_music.setStyleSheet("""
+            QPushButton {
+                font-family: 'Vazirmatn'; font-size: 10.5px; font-weight: 700;
+                background-color: rgba(56, 189, 248, 0.15); color: #38BDF8;
+                border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 5px;
+                padding: 0 10px;
+            }
+            QPushButton:hover { background-color: #0284C7; color: #FFFFFF; }
+        """)
         btn_browse_music.clicked.connect(self._browse_music_vault_drive)
-        music_path_box.addWidget(btn_browse_music)
+        cm_bar.addWidget(btn_browse_music)
 
-        btn_open_music = QPushButton("نمایش در سیستم‌عامل ↗")
-        btn_open_music.setFixedHeight(36)
+        btn_open_music = QPushButton("نمایش در فایل‌منیجر ↗")
+        btn_open_music.setFixedHeight(30)
         btn_open_music.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_open_music.setStyleSheet("background-color: #161F30; color: #64748B; border: 1px solid rgba(255,255,255,0.06); border-radius: 6px; padding: 0 12px; font-size: 11px;")
+        btn_open_music.setStyleSheet("""
+            QPushButton {
+                font-family: 'Vazirmatn'; font-size: 10.5px; font-weight: 600;
+                background-color: #1A2234; color: #94A3B8;
+                border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 5px;
+                padding: 0 8px;
+            }
+            QPushButton:hover { color: #FFFFFF; background-color: #242E42; }
+        """)
         btn_open_music.clicked.connect(lambda: open_path_in_os(self.input_music_drive.text()))
-        music_path_box.addWidget(btn_open_music)
+        cm_bar.addWidget(btn_open_music)
+        cm_lay.addLayout(cm_bar)
+        paths_grid.addWidget(card_music, 0, 1)
 
-        card_paths.add_setting_row(SettingRow("مسیر ذخیره‌سازی آرشیو موزیک و صدا:", "در صورت فعال بودن حالت کپی، فایل‌های صوتی به این پوشه منتقل می‌شوند.", None))
-        card_paths.add_custom_layout(music_path_box)
+        pw_lay.addLayout(paths_grid)
 
-        self.chk_copy_audio = QCheckBox("کپی فیزیکی فایل‌های صوتی در پوشه آرشیو")
+        # سوئیچ حالت کپی فایل‌های صوتی
+        copy_mode_card = QFrame()
+        copy_mode_card.setStyleSheet(f"""
+            QFrame {{
+                background-color: #121828;
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                border-radius: 8px;
+            }}
+            QCheckBox {{
+                font-family: 'Vazirmatn';
+                font-size: 11.5px;
+                font-weight: 700;
+                color: #F8FAFC;
+                spacing: 8px;
+                background: transparent;
+                border: none;
+            }}
+            QCheckBox::indicator {{
+                width: 18px;
+                height: 18px;
+                background-color: #1E283D;
+                border: 1.5px solid rgba(255, 255, 255, 0.22);
+                border-radius: 4px;
+            }}
+            QCheckBox::indicator:hover {{
+                border-color: #38BDF8;
+                background-color: #242E42;
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: #0284C7;
+                border: 1.5px solid #38BDF8;
+                image: url("{chk_path}");
+            }}
+        """)
+        cmc_lay = QHBoxLayout(copy_mode_card)
+        cmc_lay.setContentsMargins(14, 10, 14, 10)
+        cmc_lay.setSpacing(10)
+
+        self.chk_copy_audio = QCheckBox("کپی فیزیکی فایل‌های صوتی در پوشه آرشیو (Physical Copy Mode)")
         self.chk_copy_audio.setChecked(self.settings.get("copy_audio_to_vault", True))
-        self.chk_copy_audio.setStyleSheet("font-family: 'Vazirmatn'; font-size: 12px; color: #F8FAFC; border: none;")
+        self.chk_copy_audio.setCursor(Qt.CursorShape.PointingHandCursor)
         self.chk_copy_audio.toggled.connect(self._on_copy_audio_toggled)
-        card_paths.add_setting_row(SettingRow(
-            "نحوه ذخیره‌سازی فایل‌های صوتی:",
-            "در صورت غیرفعال بودن، فایل‌ها کپی نمی‌شوند و هیچ پوشه‌ای روی هارد ساخته نخواهد شد (فقط مسیر اصلی خوانده می‌شود).",
-            self.chk_copy_audio
-        ))
+        cmc_lay.addWidget(self.chk_copy_audio)
 
-        layout.addWidget(card_paths)
+        lbl_cmc_hint = QLabel("(در صورت خاموش بودن، فایل‌ها کپی نشده و فقط مسیر اصلی به‌صورت مرجع خوانده می‌شود)")
+        lbl_cmc_hint.setStyleSheet("font-family: 'Vazirmatn'; font-size: 10px; color: #8F98A8; border: none; background: transparent;")
+        cmc_lay.addWidget(lbl_cmc_hint)
+        cmc_lay.addStretch()
 
-        card_backup = SettingsSectionCard("نسخه‌برداری و نگهداری پایگاه داده", "تهیه نسخه پشتیبان و بازیابی ساختار پروژه‌ها و گزارشات مالی")
+        pw_lay.addWidget(copy_mode_card)
+        layout.addWidget(paths_wrap)
 
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(10)
-        
-        btn_backup = QPushButton("تهیه نسخه پشتیبان کامل (.db)")
-        btn_backup.setFixedHeight(38)
-        btn_backup.setIcon(IconProvider.get_icon("save", "#10B981", size=14))
-        btn_backup.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_backup.setStyleSheet("background-color: rgba(16, 185, 129, 0.15); color: #10B981; border: 1px solid #10B981; font-weight: bold; border-radius: 6px; padding: 0 16px; font-size: 12px;")
-        btn_backup.clicked.connect(self._backup_db)
-        btn_row.addWidget(btn_backup)
+        # ۳. کارت کنسول پشتیبان‌گیری و بازیابی استودیو (Studio Backup & Disaster Recovery)
+        backup_card = QFrame()
+        backup_card.setStyleSheet("""
+            QFrame#BackupConsoleCardFrame {
+                background-color: #101625;
+                border: 1px solid rgba(255, 255, 255, 0.05);
+                border-radius: 10px;
+            }
+        """)
+        backup_card.setObjectName("BackupConsoleCardFrame")
+        bc_lay = QVBoxLayout(backup_card)
+        bc_lay.setContentsMargins(14, 12, 14, 12)
+        bc_lay.setSpacing(10)
 
-        btn_restore = QPushButton("بازیابی از فایل پشتیبان (.db)")
-        btn_restore.setFixedHeight(38)
-        btn_restore.setIcon(IconProvider.get_icon("revision", "#F59E0B", size=14))
-        btn_restore.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_restore.setStyleSheet("background-color: rgba(245, 158, 11, 0.15); color: #F59E0B; border: 1px solid #F59E0B; font-weight: bold; border-radius: 6px; padding: 0 16px; font-size: 12px;")
-        btn_restore.clicked.connect(self._restore_db)
-        btn_row.addWidget(btn_restore)
-        btn_row.addStretch()
+        bc_top_bar = QHBoxLayout()
+        bc_top_bar.setSpacing(8)
+        lbl_bc_title = QLabel("کنسول پشتیبان‌گیری جامع استودیو (Disaster Recovery & Backup):")
+        lbl_bc_title.setStyleSheet("font-family: 'Vazirmatn'; font-size: 12px; font-weight: 800; color: #F8FAFC; background: transparent; border: none;")
+        bc_top_bar.addWidget(lbl_bc_title)
+        bc_top_bar.addStretch()
+        bc_lay.addLayout(bc_top_bar)
 
-        card_backup.add_setting_row(SettingRow("نسخه‌برداری و بازیابی دیتابیس:", "فایل دیتابیس شامل تمام پروژه‌ها، کلیپ‌ها، اصلاحیه‌ها و تراکنش‌ها است.", None))
-        card_backup.add_custom_layout(btn_row)
+        bc_grid = QHBoxLayout()
+        bc_grid.setSpacing(10)
 
-        layout.addWidget(card_backup)
+        # پنل ۱: استخراج بکاپ جامع
+        btn_backup_panel = QFrame()
+        btn_backup_panel.setFixedHeight(78)
+        btn_backup_panel.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_backup_panel.setStyleSheet("""
+            QFrame {
+                background-color: #121828;
+                border: 1px solid rgba(16, 185, 129, 0.35);
+                border-radius: 8px;
+            }
+            QFrame:hover {
+                background-color: #162432;
+                border-color: #10B981;
+            }
+        """)
+        bb_lay = QHBoxLayout(btn_backup_panel)
+        bb_lay.setContentsMargins(14, 10, 14, 10)
+        bb_lay.setSpacing(12)
+        bb_lay.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        bb_icon = QLabel()
+        bb_icon.setPixmap(IconProvider.get_pixmap("save", "#10B981", size=22))
+        bb_lay.addWidget(bb_icon)
+
+        bb_text_col = QVBoxLayout()
+        bb_text_col.setSpacing(2)
+        bb_text_col.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        lbl_bb_t = QLabel("تهیه بسته پشتیبان جامع استودیو (.clpbackup)")
+        lbl_bb_t.setStyleSheet("font-family: 'Vazirmatn'; font-size: 12px; font-weight: 800; color: #FFFFFF; border: none; background: transparent;")
+        bb_text_col.addWidget(lbl_bb_t)
+        lbl_bb_d = QLabel("بسته‌بندی تفکیک‌شده پروژه‌ها، امور مالی، برندینگ و تنظیمات در قالب یک فایل فشرده")
+        lbl_bb_d.setStyleSheet("font-family: 'Vazirmatn'; font-size: 10px; color: #94A3B8; border: none; background: transparent;")
+        bb_text_col.addWidget(lbl_bb_d)
+        bb_lay.addLayout(bb_text_col, stretch=1)
+
+        btn_backup_panel.mousePressEvent = lambda e: self._backup_db() if e.button() == Qt.MouseButton.LeftButton else None
+        bc_grid.addWidget(btn_backup_panel)
+
+        # پنل ۲: بازیابی از بسته پشتیبان
+        btn_restore_panel = QFrame()
+        btn_restore_panel.setFixedHeight(78)
+        btn_restore_panel.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_restore_panel.setStyleSheet("""
+            QFrame {
+                background-color: #121828;
+                border: 1px solid rgba(245, 158, 11, 0.35);
+                border-radius: 8px;
+            }
+            QFrame:hover {
+                background-color: #242018;
+                border-color: #F59E0B;
+            }
+        """)
+        br_lay = QHBoxLayout(btn_restore_panel)
+        br_lay.setContentsMargins(14, 10, 14, 10)
+        br_lay.setSpacing(12)
+        br_lay.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        br_icon = QLabel()
+        br_icon.setPixmap(IconProvider.get_pixmap("revision", "#F59E0B", size=22))
+        br_lay.addWidget(br_icon)
+
+        br_text_col = QVBoxLayout()
+        br_text_col.setSpacing(2)
+        br_text_col.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        lbl_br_t = QLabel("بازیابی هوشمند و گزینشی از بسته پشتیبان")
+        lbl_br_t.setStyleSheet("font-family: 'Vazirmatn'; font-size: 12px; font-weight: 800; color: #FFFFFF; border: none; background: transparent;")
+        br_text_col.addWidget(lbl_br_t)
+        lbl_br_d = QLabel("آنالیز محتوای بسته پشتیبان و انتخاب بخش‌های مدنظر جهت اعمال با پوشش ایمنی کامل")
+        lbl_br_d.setStyleSheet("font-family: 'Vazirmatn'; font-size: 10px; color: #94A3B8; border: none; background: transparent;")
+        br_text_col.addWidget(lbl_br_d)
+        br_lay.addLayout(br_text_col, stretch=1)
+
+        btn_restore_panel.mousePressEvent = lambda e: self._restore_db() if e.button() == Qt.MouseButton.LeftButton else None
+        bc_grid.addWidget(btn_restore_panel)
+
+        bc_lay.addLayout(bc_grid)
+        layout.addWidget(backup_card)
+
         layout.addStretch()
         return scroll
 
@@ -1035,29 +1326,13 @@ class SettingsView(QWidget):
         container = scroll.widget()
         layout = container.layout()
 
-        card = SettingsSectionCard("عملیات حساس و پاکسازی داده‌ها (Danger Zone)", "بازنشانی تنظیمات پیکربندی یا پاکسازی کامل اطلاعات ذخیره‌شده")
-        card.setStyleSheet("""
-            QFrame#SettingsSectionCardFrame {
-                background-color: #121826;
-                border: 1.5px solid rgba(239, 68, 68, 0.35);
-                border-radius: 10px;
-            }
-        """)
+        card = SettingsSectionCard(
+            "مرکز پاک‌سازی هوشمند و بازنشانی داده‌ها (Purge & Reset Hub)",
+            "مدیریت هدفمند پاک‌سازی کش، آرشیو فصول گذشته و بازنشانی تنظیمات با ضمانت ایمنی کامل"
+        )
 
-        btn_reset_settings = QPushButton("بازنشانی تنظیمات")
-        btn_reset_settings.setFixedHeight(36)
-        btn_reset_settings.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_reset_settings.setStyleSheet("color: #F59E0B; background-color: rgba(245, 158, 11, 0.12); border: 1px solid #F59E0B; border-radius: 6px; padding: 0 16px; font-weight: 600; font-size: 12px;")
-        btn_reset_settings.clicked.connect(self._reset_settings)
-        card.add_setting_row(SettingRow("بازنشانی تنظیمات به مقادیر اولیه (Factory Reset):", "تنها تنظیمات به حالت اولیه بازمی‌گردند؛ پروژه‌ها و حساب‌های مالی حفظ می‌شوند.", btn_reset_settings))
-
-        btn_wipe = QPushButton("پاکسازی دیتابیس")
-        btn_wipe.setFixedHeight(36)
-        btn_wipe.setIcon(IconProvider.get_icon("trash", "#FFFFFF", size=13))
-        btn_wipe.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_wipe.setStyleSheet("background-color: #EF4444; color: #FFFFFF; font-weight: bold; border: none; border-radius: 6px; padding: 0 16px; font-size: 12px;")
-        btn_wipe.clicked.connect(self._wipe_database)
-        card.add_setting_row(SettingRow("پاکسازی کامل پایگاه داده:", "هشدار: تمامی پروژه‌ها، کلیپ‌ها، لاگ‌ها، استودیوها و تراکنش‌های مالی حذف خواهند شد.", btn_wipe))
+        self.purge_center = PurgeCenterWidget(self)
+        card.add_setting_row(self.purge_center)
 
         layout.addWidget(card)
         layout.addStretch()
@@ -1478,67 +1753,144 @@ class SettingsView(QWidget):
                 StudioConfirmDialog.ask(self.window(), "خطا", "خطا در تنظیم مسیر پوشه انتخابی.", icon_name="alert")
 
     def _backup_db(self):
-        path, _ = QFileDialog.getSaveFileName(self, "ذخیره فایل پشتیبان دیتابیس", "CutterLog_Backup.db", "SQLite Database (*.db)")
+        from widgets.studio_backup_dialogs import StudioExportBackupDialog
+        from core.backup_manager import StudioBackupManager
+        import jdatetime
+
+        diag = StudioExportBackupDialog(self.window())
+        if not diag.exec():
+            return
+
+        selected_sections = diag.selected_sections
+        if not selected_sections:
+            return
+
+        today_clean = jdatetime.date.today().strftime("%Y_%m_%d")
+        default_filename = f"CutterLog_Studio_Backup_{today_clean}.clpbackup"
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "ذخیره بسته پشتیبان جامع استودیو",
+            default_filename,
+            "CutterLog Studio Backup (*.clpbackup);;Zip Archive (*.zip)"
+        )
         if path:
-            if SettingsManager.backup_database(path):
+            if StudioBackupManager.create_backup_archive(path, selected_sections):
                 StudioConfirmDialog.ask(
                     self.window(),
                     title="پشتیبان‌گیری موفق",
-                    message="نسخه پشتیبان پایگاه داده با موفقیت ذخیره شد.",
-                    details=f"مسیر ذخیره:\n{path}",
+                    message="بسته پشتیبان استودیو با موفقیت بسته‌بندی و ذخیره شد.",
+                    details=f"بخش‌های ذخیره‌شده: {len(selected_sections)} بخش\nمسیر فایل:\n{path}",
                     confirm_text="متوجه شدم",
                     icon_name="check"
+                )
+            else:
+                StudioConfirmDialog.ask(
+                    self.window(),
+                    title="خطا در پشتیبان‌گیری",
+                    message="خطایی در ذخیره بسته پشتیبان رخ داد.",
+                    is_danger=True,
+                    icon_name="alert"
                 )
 
     def _restore_db(self):
-        path, _ = QFileDialog.getOpenFileName(self, "انتخاب فایل پشتیبان", "", "SQLite Database (*.db)")
-        if path:
-            if SettingsManager.restore_database(path):
-                self._refresh_studios_grid()
-                global_signals.settings_updated.emit()
-                StudioConfirmDialog.ask(
-                    self.window(),
-                    title="بازیابی موفق",
-                    message="اطلاعات پایگاه داده با موفقیت بازیابی شد.",
-                    details="پیشنهاد می‌شود برای اعمال کامل تغییرات، برنامه را یک‌بار مجدداً راه‌اندازی کنید.",
-                    confirm_text="متوجه شدم",
-                    icon_name="check"
-                )
+        from widgets.studio_backup_dialogs import StudioImportBackupDialog
+        from core.backup_manager import StudioBackupManager
 
-    def _reset_settings(self):
-        if StudioConfirmDialog.ask(
-            self.window(),
-            title="تأیید بازنشانی تنظیمات",
-            message="آیا مطمئن هستید که می‌خواهید تمام تنظیمات به مقادیر اولیه بازگردند؟",
-            details="پروژه‌ها، اطلاعات مالی و دایرکتوری استودیوها بدون تغییر باقی خواهند ماند.",
-            confirm_text="بازنشانی تنظیمات",
-            is_danger=True,
-            icon_name="alert"
-        ):
-            SettingsManager.reset_settings_to_default()
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "انتخاب فایل پشتیبان استودیو",
+            "",
+            "CutterLog Backups (*.clpbackup *.zip *.db);;All Files (*.*)"
+        )
+        if not path:
+            return
+
+        manifest_info = StudioBackupManager.inspect_backup_archive(path)
+        if not manifest_info:
+            StudioConfirmDialog.ask(
+                self.window(),
+                title="فایل نامعتبر",
+                message="فایل انتخاب‌شده ساختار پشتیبان معتبر CutterLog Pro را ندارد.",
+                is_danger=True,
+                icon_name="alert"
+            )
+            return
+
+        diag = StudioImportBackupDialog(manifest_info, self.window())
+        if not diag.exec():
+            return
+
+        selected_sections = diag.selected_sections
+        if not selected_sections:
+            return
+
+        if StudioBackupManager.restore_backup_archive(path, selected_sections):
             self.settings = SettingsManager.load_settings()
-            self._persist_settings()
+
+            if hasattr(self, "input_editor"):
+                self.input_editor.blockSignals(True)
+                self.input_editor.setText(self.settings.get("editor_name", ""))
+                self.input_editor.blockSignals(False)
+
+            if hasattr(self, "input_studio"):
+                self.input_studio.blockSignals(True)
+                self.input_studio.setText(self.settings.get("studio_name", ""))
+                self.input_studio.blockSignals(False)
+
+            if hasattr(self, "input_phone"):
+                self.input_phone.blockSignals(True)
+                self.input_phone.setText(self.settings.get("phone", ""))
+                self.input_phone.blockSignals(False)
+
+            if hasattr(self, "input_card"):
+                self.input_card.blockSignals(True)
+                self.input_card.setText(self.settings.get("card_number", ""))
+                self.input_card.blockSignals(False)
+
+            if hasattr(self, "input_iban"):
+                self.input_iban.blockSignals(True)
+                self.input_iban.setText(self.settings.get("iban", ""))
+                self.input_iban.blockSignals(False)
+
+            if hasattr(self, "txt_client_template"):
+                self.txt_client_template.blockSignals(True)
+                self.txt_client_template.setPlainText(self.settings.get("client_message_template", ""))
+                self.txt_client_template.blockSignals(False)
+
+            if hasattr(self, "input_invoice_note"):
+                self.input_invoice_note.blockSignals(True)
+                self.input_invoice_note.setPlainText(self.settings.get("invoice_footer_note", ""))
+                self.input_invoice_note.blockSignals(False)
+
+            if hasattr(self, "stepper_deadline"):
+                self.stepper_deadline.setValue(self.settings.get("alert_days_before_deadline", 5))
+
+            if hasattr(self, "stepper_auto_archive"):
+                self.stepper_auto_archive.setValue(self.settings.get("auto_archive_delivered_days", 7))
+
             self._refresh_packages_grid()
             self._refresh_clips_grid()
             self._refresh_studios_grid()
             self._refresh_amounts_grid()
             self._refresh_branding_previews()
-            self.input_music_drive.setText(str(get_vault_root_dir().resolve()))
-            self.txt_client_template.setPlainText(self.settings.get("client_message_template", DEFAULT_CLIENT_MESSAGE_TEMPLATE))
-            global_signals.show_toast.emit("تمام تنظیمات به حالت اولیه کارخانه بازنشانی شدند.", "success")
 
-    def _wipe_database(self):
-        if StudioConfirmDialog.ask(
-            self.window(),
-            title="هشدار فوق‌العاده حساس: پاکسازی دیتابیس",
-            message="آیا از پاکسازی کامل پایگاه داده اطمینان دارید؟",
-            details="هشدار: تمام پروژه‌ها، کلیپ‌ها، دوره‌های اصلاحیه، لاگ‌ها، استودیوها و تراکنش‌های مالی برای همیشه حذف خواهند شد!",
-            confirm_text="پاکسازی دائمی کل داده‌ها",
-            is_danger=True,
-            icon_name="trash"
-        ):
-            SettingsManager.wipe_entire_database()
-            global_signals.project_deleted.emit(0)
-            self._refresh_studios_grid()
             global_signals.settings_updated.emit()
-            global_signals.show_toast.emit("پایگاه داده به‌صورت کامل پاکسازی و صفر شد.", "info")
+            global_signals.project_updated.emit(0)
+
+            StudioConfirmDialog.ask(
+                self.window(),
+                title="بازیابی موفق",
+                message="بخش‌های انتخاب‌شده با موفقیت بازیابی و اعمال شدند.",
+                details="پیشنهاد می‌شود جهت پاکسازی کش سیستم و رندر فونت‌ها، برنامه را یک‌بار مجدداً راه‌اندازی کنید.",
+                confirm_text="متوجه شدم",
+                icon_name="check"
+            )
+        else:
+            StudioConfirmDialog.ask(
+                self.window(),
+                title="خطا در بازیابی",
+                message="خطایی در فرآیند استخراج و اعمال اطلاعات رخ داد.",
+                is_danger=True,
+                icon_name="alert"
+            )

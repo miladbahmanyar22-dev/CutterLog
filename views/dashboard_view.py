@@ -227,7 +227,9 @@ class DashboardView(QWidget):
                 "rev_progress_pct": rev_pct,
                 "rev_completed_tasks": rev_c,
                 "rev_total_tasks": rev_t,
-                "status_info": status_info
+                "status_info": status_info,
+                "primary_path": p.drive_locations[0].absolute_path if p.drive_locations else None,
+                "nle_project_path": p.nle_project_path
             }
             card = ProjectCardMini(p_dict)
             row = index // 3

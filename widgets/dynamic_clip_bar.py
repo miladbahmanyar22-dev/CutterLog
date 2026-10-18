@@ -2,45 +2,96 @@
 # FILE: widgets/dynamic_clip_bar.py
 # ==================================================
 from typing import List, Dict, Any
-from PySide6.QtWidgets import QWidget, QToolTip
+from PySide6.QtWidgets import QWidget
 from PySide6.QtCore import Qt, QRectF, Signal
 from PySide6.QtGui import QPainter, QColor, QBrush, QLinearGradient, QMouseEvent
+from sqlalchemy import select, func
 
-from core.persian_utils import to_persian_numbers, gregorian_to_jalali
+from database.db_manager import db
+from time_tracking.models import WorkSession
 from core.project_controller import ProjectController
 
 
 class DynamicClipOverviewBar(QWidget):
     """
-    نوار پیشرفت سگمنتی تعاملی به سبک تایم‌لاین NLE (DaVinci / Premiere)
-    امکان تغییر وضعیت مستقیم کلیپ‌ها با کلیک روی هر سگمنت
+    نوار پیشرفت سگمنتی تعاملی متصل به ماژول زمان و راندمان:
+    - نسبت طول هر سگمنت دقیقاً بر اساس دقایق کارکرد ثبت‌شده روی همان کلیپ محاسبه می‌شود.
+    - پاپ‌آپ‌های ناخواسته هنگام حرکت موس حذف شده‌اند.
     """
     clip_toggled = Signal(int, bool)  # (clip_id, new_status)
 
     def __init__(self, clips_data: List[Dict[str, Any]] = None, parent=None):
         super().__init__(parent)
         self.clips = clips_data or []
-        self.setFixedHeight(10)  # ارتفاع مناسب برای کلیک راحت
+        self.clip_durations: Dict[int, int] = {}
+        self.setFixedHeight(10)
         self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.hovered_idx = -1
+        self._load_durations_from_work_sessions()
+
+    def _load_durations_from_work_sessions(self):
+        """استخراج مجموع زمان‌های کارکرد ثبت‌شده برای هر کلیپ از جدول جلسات کاری"""
+        self.clip_durations.clear()
+        clip_ids = [c.get("id") for c in self.clips if c.get("id")]
+        if not clip_ids:
+            return
+
+        try:
+            with db.get_session() as session:
+                stmt = (
+                    select(WorkSession.clip_id, func.sum(WorkSession.active_duration))
+                    .where(WorkSession.clip_id.in_(clip_ids))
+                    .group_by(WorkSession.clip_id)
+                )
+                for c_id, total_sec in session.execute(stmt).all():
+                    if c_id:
+                        self.clip_durations[c_id] = total_sec or 0
+        except Exception:
+            pass
 
     def set_clips(self, clips_data: List[Dict[str, Any]]):
         self.clips = clips_data or []
+        self._load_durations_from_work_sessions()
         self.update()
 
-    def _get_segment_geometry(self, index: int) -> tuple[float, float, float, float]:
-        w = float(self.width())
-        h = float(self.height())
+    def _calculate_segments_layout(self) -> List[tuple[float, float, float, float]]:
+        """
+        محاسبه داینامیک مختصات و طول هر کلیپ بر اساس دقایق کارکرد
+        """
         total_clips = len(self.clips)
         if total_clips == 0:
-            return 0.0, 0.0, 0.0, 0.0
-        
+            return []
+
+        w = float(self.width())
+        h = float(self.height())
         spacing = 3.0 if total_clips <= 8 else 2.0
-        total_spacing = spacing * (total_clips - 1)
-        seg_w = max(4.0, (w - total_spacing) / total_clips)
-        x = index * (seg_w + spacing)
-        return x, 1.0, seg_w, h - 2.0
+        available_w = max(10.0, w - (spacing * (total_clips - 1)))
+
+        # جمع کل ثانیه‌های کارشده در پروژه
+        total_work_seconds = sum(self.clip_durations.get(c.get("id"), 0) for c in self.clips)
+
+        # تعیین حداقل عرض برای هر سگمنت تا کلیپ‌های با زمان صفر محو نشوند
+        min_seg_w = max(6.0, available_w / (total_clips * 3.0))
+        remaining_pool = max(0.0, available_w - (min_seg_w * total_clips))
+
+        geometries = []
+        current_x = 0.0
+
+        for clip in self.clips:
+            c_id = clip.get("id")
+            c_sec = self.clip_durations.get(c_id, 0)
+
+            if total_work_seconds > 0 and remaining_pool > 0:
+                time_ratio = c_sec / total_work_seconds
+                seg_w = min_seg_w + (remaining_pool * time_ratio)
+            else:
+                seg_w = available_w / total_clips
+
+            geometries.append((current_x, 1.0, seg_w, h - 2.0))
+            current_x += seg_w + spacing
+
+        return geometries
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -56,9 +107,12 @@ class DynamicClipOverviewBar(QWidget):
             painter.end()
             return
 
-        total_clips = len(self.clips)
+        geometries = self._calculate_segments_layout()
+
         for i, clip in enumerate(self.clips):
-            x, y, seg_w, seg_h = self._get_segment_geometry(i)
+            if i >= len(geometries):
+                break
+            x, y, seg_w, seg_h = geometries[i]
             rect = QRectF(x, y, seg_w, seg_h)
             is_completed = clip.get("is_completed", False)
 
@@ -89,40 +143,17 @@ class DynamicClipOverviewBar(QWidget):
             return
 
         pos_x = event.position().x() if hasattr(event, "position") else event.pos().x()
-        global_pos = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
+        geometries = self._calculate_segments_layout()
+        found_idx = -1
 
-        total_clips = len(self.clips)
-        hovered_idx = -1
-
-        for i in range(total_clips):
-            x, _, seg_w, _ = self._get_segment_geometry(i)
+        for i, (x, _, seg_w, _) in enumerate(geometries):
             if x <= pos_x <= (x + seg_w + 2.0):
-                hovered_idx = i
+                found_idx = i
                 break
 
-        if 0 <= hovered_idx < total_clips:
-            if self.hovered_idx != hovered_idx:
-                self.hovered_idx = hovered_idx
-                self.update()
-
-            clip = self.clips[hovered_idx]
-            name = clip.get("name") or clip.get("clip_name", f"کلیپ {hovered_idx + 1}")
-            is_completed = clip.get("is_completed", False)
-            comp_dt = clip.get("completed_at")
-
-            status_txt = "✓ تکمیل شده (کلیک برای بازگردانی)" if is_completed else "○ باقی‌مانده (کلیک برای ثبت تکمیل)"
-            dt_txt = f"\nزمان تحویل: {gregorian_to_jalali(comp_dt)}" if (is_completed and comp_dt) else ""
-
-            tip = (
-                f"🎬 {name}\n"
-                f"وضعیت: {status_txt}{dt_txt}"
-            )
-            QToolTip.showText(global_pos, tip, self)
-        else:
-            if self.hovered_idx != -1:
-                self.hovered_idx = -1
-                self.update()
-                QToolTip.hideText()
+        if self.hovered_idx != found_idx:
+            self.hovered_idx = found_idx
+            self.update()
 
         super().mouseMoveEvent(event)
 
@@ -130,23 +161,24 @@ class DynamicClipOverviewBar(QWidget):
         if self.hovered_idx != -1:
             self.hovered_idx = -1
             self.update()
-            QToolTip.hideText()
         super().leaveEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent):
-        # مهار کلیک برای جلوگیری از نفوذ به کارت پس‌زمینه
         if event.button() == Qt.MouseButton.LeftButton:
             event.accept()
             return
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
-        # تغییر وضعیت مستقیم کلیپ با مهار کامل رویداد
         if event.button() == Qt.MouseButton.LeftButton:
             event.accept()
             pos_x = event.position().x() if hasattr(event, "position") else event.pos().x()
+            geometries = self._calculate_segments_layout()
+
             for i, clip in enumerate(self.clips):
-                x, _, seg_w, _ = self._get_segment_geometry(i)
+                if i >= len(geometries):
+                    break
+                x, _, seg_w, _ = geometries[i]
                 if x <= pos_x <= (x + seg_w + 3.0):
                     clip_id = clip.get("id")
                     if clip_id:
@@ -154,6 +186,7 @@ class DynamicClipOverviewBar(QWidget):
                         if new_res is not None:
                             clip["is_completed"] = new_res
                             self.clip_toggled.emit(clip_id, new_res)
+                            self._load_durations_from_work_sessions()
                             self.update()
                     break
             return

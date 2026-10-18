@@ -9,6 +9,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from database.db_manager import db
 from database.models import Project, Transaction, Client, StageEnum, ProjectRevision, PaymentTypeEnum, WorkflowStatusEnum
 from core.project_controller import ProjectController
+from core.persian_utils import to_persian_numbers
 
 
 class FinanceController:
@@ -79,12 +80,17 @@ class FinanceController:
         return None, None
 
     @staticmethod
-    def get_studio_debt_summary(client_id: int) -> Dict[str, Any]:
+    def get_studio_debt_summary(
+        client_id: int, 
+        target_project_id: Optional[int] = None,
+        included_project_ids: Optional[List[int]] = None
+    ) -> Dict[str, Any]:
         with db.get_session() as session:
             stmt = (
                 select(Project)
                 .options(
                     joinedload(Project.client),
+                    selectinload(Project.clips),
                     selectinload(Project.revisions),
                     joinedload(Project.transactions)
                 )
@@ -99,35 +105,74 @@ class FinanceController:
         total_paid = 0
         unsettled_projects = []
         settled_projects = []
+        all_project_summaries = []
 
         for p in eligible_projects:
             fin = ProjectController.get_project_financial_summary(p)
-            total_fee += fin["total_fee"]
-            total_paid += fin["total_paid"]
+            
+            clips = p.clips or []
+            paid_revisions = [rev.title for rev in (p.revisions or []) if (rev.extra_fee or 0) > 0]
+
+            if len(clips) >= 3:
+                service_desc = f"تدوین کامل مراسم ({to_persian_numbers(len(clips))} کلیپ)"
+            elif len(clips) > 0:
+                service_desc = "، ".join([c.clip_name for c in clips])
+            else:
+                service_desc = "تدوین و پس‌تولید ویدیو"
+
+            if paid_revisions:
+                service_desc += f" + {paid_revisions[-1]}"
 
             p_summary = {
                 "id": p.id,
                 "project_number": p.project_number or p.id,
                 "title": p.couple_names or p.title,
+                "service_description": service_desc,
+                "clips_count": len(clips),
                 "total_fee": fin["total_fee"],
+                "base_fee": fin["base_fee"],
+                "revisions_fee": fin["revisions_fee"],
                 "total_paid": fin["total_paid"],
                 "remaining": fin["remaining"],
+                "raw_balance": fin["raw_balance"],
                 "is_settled": fin["is_settled"],
-                "created_at": p.created_at
+                "created_at": p.created_at,
+                "delivered_at": p.delivered_at
             }
 
-            if fin["remaining"] > 0:
-                unsettled_projects.append(p_summary)
-            else:
-                settled_projects.append(p_summary)
+            all_project_summaries.append(p_summary)
+
+            is_included = True
+            if target_project_id is not None:
+                is_included = (p.id == target_project_id)
+            elif included_project_ids is not None:
+                is_included = (p.id in included_project_ids)
+
+            if is_included:
+                total_fee += fin["total_fee"]
+                total_paid += fin["total_paid"]
+
+                if fin["remaining"] > 0:
+                    unsettled_projects.append(p_summary)
+                else:
+                    settled_projects.append(p_summary)
+
+        selected_ids = {p["id"] for p in (unsettled_projects + settled_projects)}
+        prior_unsettled_debt = sum(
+            p["remaining"] for p in all_project_summaries 
+            if p["id"] not in selected_ids and p["remaining"] > 0
+        )
 
         return {
             "total_fee": total_fee,
             "total_paid": total_paid,
             "total_remaining": max(0, total_fee - total_paid),
+            "prior_unsettled_debt": prior_unsettled_debt,
+            "grand_total_with_prior": max(0, total_fee - total_paid) + prior_unsettled_debt,
             "unsettled_projects": unsettled_projects,
             "settled_projects": settled_projects,
-            "all_projects_count": len(eligible_projects)
+            "all_projects": all_project_summaries,
+            "all_projects_count": len(all_project_summaries)
         }
 
     @staticmethod
@@ -137,7 +182,8 @@ class FinanceController:
         payment_type: PaymentTypeEnum = PaymentTypeEnum.STAGE_PAYMENT,
         notes: str = "",
         tracking_code: str = "",
-        paid_at: Optional[datetime] = None
+        paid_at: Optional[datetime] = None,
+        target_project_id: Optional[int] = None
     ) -> List[int]:
         if total_amount <= 0:
             return []
@@ -157,6 +203,30 @@ class FinanceController:
             )
             all_projects = session.scalars(stmt).unique().all()
             eligible_projects = [p for p in all_projects if FinanceController.is_project_eligible_for_finance(p)]
+
+            if target_project_id:
+                target_p = next((p for p in eligible_projects if p.id == target_project_id), None)
+                if target_p:
+                    trx = Transaction(
+                        project_id=target_p.id,
+                        client_id=client_id,
+                        amount=total_amount,
+                        payment_type=payment_type,
+                        notes=notes.strip() or f"واریزی مستقیم برای {target_p.couple_names or target_p.title}",
+                        tracking_code=tracking_code.strip() or None,
+                        paid_at=paid_at
+                    )
+                    session.add(trx)
+                    session.flush()
+                    created_transaction_ids.append(trx.id)
+
+                    ProjectController.log_event(
+                        session, target_p.id, "TRANSACTION_ADDED",
+                        f"دریافت مبلغ {total_amount:,} تومان",
+                        f"کد پیگیری: {tracking_code or '-'} | {notes or 'تسویه مستقیم پروژه'}"
+                    )
+                    session.commit()
+                    return created_transaction_ids
 
             remaining_to_allocate = total_amount
 
@@ -199,7 +269,7 @@ class FinanceController:
                     client_id=client_id,
                     amount=remaining_to_allocate,
                     payment_type=payment_type,
-                    notes=f"{notes.strip()} [مانده بستانکار استودیو]".strip(),
+                    notes=f"{notes.strip()} [بستانکاری مازاد استودیو]".strip(),
                     tracking_code=tracking_code.strip() or None,
                     paid_at=paid_at
                 )

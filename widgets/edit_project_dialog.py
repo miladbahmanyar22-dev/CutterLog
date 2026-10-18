@@ -199,37 +199,38 @@ class EditProjectDialog(StudioBaseDialog):
         lbl_clips_title.setStyleSheet("font-family: 'Vazirmatn'; font-size: 12.5px; font-weight: 700; color: #F8FAFC; border: none;")
         form_layout.addWidget(lbl_clips_title)
 
+        chk_path = IconProvider.get_checkbox_checked_icon_path()
         clips_frame = QWidget()
-        clips_frame.setStyleSheet("""
-            QWidget {
+        clips_frame.setStyleSheet(f"""
+            QWidget {{
                 background-color: #161F30;
                 border: 1px solid rgba(255, 255, 255, 0.06);
                 border-radius: 8px;
-            }
-            QCheckBox {
+            }}
+            QCheckBox {{
                 font-family: 'Vazirmatn';
                 color: #F8FAFC;
                 font-size: 11.5px;
                 spacing: 8px;
                 background: transparent;
                 border: none;
-            }
-            QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
+            }}
+            QCheckBox::indicator {{
+                width: 18px;
+                height: 18px;
                 background-color: #242E42;
-                border: 1.5px solid rgba(255, 255, 255, 0.2);
+                border: 1.5px solid rgba(255, 255, 255, 0.22);
                 border-radius: 4px;
-            }
-            QCheckBox::indicator:hover {
-                border-color: #6366F1;
+            }}
+            QCheckBox::indicator:hover {{
+                border-color: #818CF8;
                 background-color: #2D3952;
-            }
-            QCheckBox::indicator:checked {
+            }}
+            QCheckBox::indicator:checked {{
                 background-color: #6366F1;
-                border-color: #6366F1;
-                image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'%3E%3C/polyline%3E%3C/svg%3E");
-            }
+                border: 1.5px solid #818CF8;
+                image: url("{chk_path}");
+            }}
         """)
         clips_layout = QGridLayout(clips_frame)
         clips_layout.setContentsMargins(10, 8, 10, 8)

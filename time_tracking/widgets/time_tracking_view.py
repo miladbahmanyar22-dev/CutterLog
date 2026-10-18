@@ -17,7 +17,7 @@ from PySide6.QtGui import (
 from sqlalchemy import select, func
 
 from database.db_manager import db
-from database.models import Project, ProjectClipItem
+from database.models import Project, ProjectClipItem, WorkflowStatusEnum, StageEnum
 from core.project_controller import ProjectController
 from time_tracking.models import WorkSession
 from time_tracking.timer_engine import TimeTrackingEngine
@@ -111,7 +111,7 @@ class NleStyleTimelineBar(QWidget):
             painter.drawRoundedRect(QRectF(0, track_y, w, track_h), 8, 8)
             painter.setPen(QColor("#64748B"))
             painter.setFont(QFont("Vazirmatn", 10, QFont.Weight.Bold))
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "قطعه‌ای برای نمایش در این پروژه تعریف نشده است")
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "پروژه فعالی برای تدوین در جریان نیست")
             painter.end()
             return
 
@@ -150,7 +150,6 @@ class NleStyleTimelineBar(QWidget):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRoundedRect(rect, 8, 8)
 
-            # ۱. میکرو-بج کپسولی تایم در بالا
             dur_str = safe_format_hms(clip.get("spent_seconds", 0))
             time_display = to_persian_numbers(dur_str)
             if is_completed:
@@ -183,7 +182,6 @@ class NleStyleTimelineBar(QWidget):
             painter.setPen(time_color)
             painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, time_display)
 
-            # ۲. عنوان قطعه در پایین (سایز متعادل ۹.۵ و وزن ملایم نیمه‌بولد)
             name_font = QFont("Vazirmatn", 9, QFont.Weight.DemiBold)
             painter.setFont(name_font)
             fm_name = QFontMetrics(name_font)
@@ -969,6 +967,8 @@ class TimeTrackingView(QWidget):
         global_signals.project_created.connect(trigger)
         global_signals.project_updated.connect(trigger)
         global_signals.clip_status_toggled.connect(trigger)
+        global_signals.stage_changed.connect(trigger)
+        global_signals.project_archived.connect(trigger)
         global_signals.timer_tick.connect(self._on_timer_tick)
         self.engine.retroactive_prompt_requested.connect(self.retro_banner.show_prompt)
 
@@ -1020,13 +1020,25 @@ class TimeTrackingView(QWidget):
         self._refresh_session_history()
 
     def _load_uncompleted_projects(self):
+        """
+        واکشی فقط پروژه‌های در حال تدوین:
+        پروژه‌هایی که تحویل داده شده‌اند (UNDER_REVIEW / DELIVERED) حذف می‌شوند.
+        """
         raw_projects = ProjectController.get_active_projects()
         
         uncompleted_list = []
         for p in raw_projects:
-            if not p.clips:
+            if not p.clips or p.is_archived:
                 continue
+
+            stage_val = p.current_stage.value if hasattr(p.current_stage, "value") else str(p.current_stage)
+            status_val = p.workflow_status.value if hasattr(p.workflow_status, "value") else str(p.workflow_status)
+            
+            if p.delivered_at is not None or status_val == WorkflowStatusEnum.UNDER_REVIEW.value or stage_val == StageEnum.DELIVERED.value:
+                continue
+
             completed_cnt, total_cnt, pct = ProjectController.calculate_project_progress(p)
+            
             raw_studio = p.client.company if (p.client and p.client.company) else (p.client.full_name if p.client else "")
             studio_display = format_studio_title(raw_studio) if raw_studio else "بدون استودیو"
             
@@ -1062,7 +1074,7 @@ class TimeTrackingView(QWidget):
                 self.combo_filter_projects.setCurrentIndex(idx)
         else:
             self.selected_project_id = None
-            self.combo_filter_projects.addItem("پروژه‌ای برای نمایش وجود ندارد", None)
+            self.combo_filter_projects.addItem("پروژه‌ای در حال تدوین نیست", None)
 
         self.combo_filter_projects.blockSignals(False)
         self._render_clips_grid()
@@ -1073,6 +1085,28 @@ class TimeTrackingView(QWidget):
             self.selected_project_id = p_id
             self._render_clips_grid()
             self._refresh_session_history()
+        else:
+            self._reset_to_idle_state()
+
+    def _reset_to_idle_state(self):
+        """خام‌سازی کامل کادرها وقتی پروژه فعالی در دست تدوین نیست"""
+        self.selected_project_id = None
+        self.engine.select_context(0, None)
+        
+        self.lbl_project_header.setText("پروژه‌ای در حال تدوین نیست (استندبای)")
+        self.timer_card.set_context("پروژه‌ای انتخاب نشده", "—", "—", False, 0)
+        self.timer_card.update_display_state()
+        
+        if hasattr(self, "nle_timeline_card"):
+            self.nle_timeline_card.update_project_timeline(None, "")
+            
+        while self.clips_grid_layout.count():
+            item = self.clips_grid_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self.clip_buttons.clear()
+
+        self._refresh_session_history()
 
     def _render_clips_grid(self):
         while self.clips_grid_layout.count():
@@ -1084,10 +1118,7 @@ class TimeTrackingView(QWidget):
 
         cur_proj = next((p for p in self.cached_uncompleted_projects if p["id"] == self.selected_project_id), None)
         if not cur_proj:
-            self.lbl_project_header.setText("پروژه‌ای برای انجام باقی نمانده است ✓")
-            self.timer_card.set_context("پروژه‌ای انتخاب نشده", "—", "—", False, 0)
-            if hasattr(self, "nle_timeline_card"):
-                self.nle_timeline_card.update_project_timeline(None, "")
+            self._reset_to_idle_state()
             return
 
         couple_name = cur_proj["couple_names"]
@@ -1201,13 +1232,24 @@ class TimeTrackingView(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
+        # اگر پروژه‌ای در حال تدوین انتخاب نشده باشد، بخش تاریخچه کلاً خام می‌شود
+        if not self.selected_project_id:
+            if hasattr(self, "sessions_summary_strip"):
+                self.sessions_summary_strip.setVisible(False)
+            self.lbl_history_title.setText("تاریخچه جلسات کاری:")
+            empty_lbl = QLabel("پروژه‌ای در حال تدوین نیست.")
+            empty_lbl.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11px; color: #64748B; padding: 14px 0;")
+            empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.sessions_grid_layout.addWidget(empty_lbl, 0, 0, 1, 3)
+            return
+
         today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
         
         with db.get_session() as session:
-            stmt = select(WorkSession).where(WorkSession.start_time >= today_start)
-
-            if self.selected_project_id:
-                stmt = stmt.where(WorkSession.project_id == self.selected_project_id)
+            stmt = select(WorkSession).where(
+                WorkSession.start_time >= today_start,
+                WorkSession.project_id == self.selected_project_id
+            )
 
             if self.engine.current_clip_id:
                 stmt = stmt.where(WorkSession.clip_id == self.engine.current_clip_id)
@@ -1223,7 +1265,7 @@ class TimeTrackingView(QWidget):
             if not sessions:
                 if hasattr(self, "sessions_summary_strip"):
                     self.sessions_summary_strip.setVisible(False)
-                empty_msg = "برای این کلیپ هنوز جلسه کاری ثبت نشده است." if self.engine.current_clip_id else "امروز هنوز جلسه کاری ثبت نشده است."
+                empty_msg = "برای این کلیپ هنوز جلسه کاری ثبت نشده است." if self.engine.current_clip_id else "امروز هنوز جلسه کاری برای این پروژه ثبت نشده است."
                 empty_lbl = QLabel(empty_msg)
                 empty_lbl.setStyleSheet("font-family: 'Vazirmatn'; font-size: 11px; color: #64748B; padding: 14px 0;")
                 empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
