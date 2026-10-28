@@ -148,7 +148,7 @@ class TimerControlCard(QFrame):
         layout.setContentsMargins(18, 14, 18, 14)
         layout.setSpacing(10)
 
-        # ۱. ردیف بالا
+        # ردیف بالا
         top_row = QHBoxLayout()
         top_row.setSpacing(10)
         top_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
@@ -173,7 +173,7 @@ class TimerControlCard(QFrame):
 
         layout.addLayout(top_row)
 
-        # ۲. پنل دیجیتال
+        # پنل دیجیتال
         self.timer_screen = QFrame()
         self.timer_screen.setObjectName("TimerScreenFrame")
         self.timer_screen.setFixedHeight(68)
@@ -220,7 +220,7 @@ class TimerControlCard(QFrame):
 
         layout.addWidget(self.timer_screen)
 
-        # ۳. دکمه‌های کنترل
+        # دکمه‌های کنترل
         btn_row = QHBoxLayout()
         btn_row.setSpacing(10)
         btn_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -248,7 +248,6 @@ class TimerControlCard(QFrame):
         self.btn_start.clicked.connect(self._handle_start)
         btn_row.addWidget(self.btn_start)
 
-        # دکمه بازگشایی و لغو قفل (هنگام کلیک اشتباه یا نیاز به اصلاح مجدد)
         self.btn_reopen = QPushButton("🔓 بازگشایی و ادامه تدوین")
         self.btn_reopen.setFixedHeight(38)
         self.btn_reopen.setMinimumWidth(180)
@@ -382,7 +381,6 @@ class TimerControlCard(QFrame):
         animate = (self.engine.is_running and not self.engine.is_paused)
 
         if self.is_clip_locked:
-            # حالت تکمیل‌شده: خاکستری، مات و بدون چشمک‌زدن
             color_hm = "#64748B"
             color_s = "#475569"
             colon_c = "#475569"
@@ -410,7 +408,7 @@ class TimerControlCard(QFrame):
             colon_c = "#F59E0B"
             self.timer_screen.setStyleSheet("""
                 QFrame#TimerScreenFrame {
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #060911, stop:1 #0C1220);
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #060911, stop:1 #0C1220);
                     border: 1px solid rgba(245, 158, 11, 0.35);
                     border-radius: 10px;
                 }
@@ -422,7 +420,7 @@ class TimerControlCard(QFrame):
             self.colon_visible = not self.colon_visible
             self.timer_screen.setStyleSheet("""
                 QFrame#TimerScreenFrame {
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #060911, stop:1 #0C1220);
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #060911, stop:1 #0C1220);
                     border: 1px solid rgba(99, 102, 241, 0.35);
                     border-radius: 10px;
                 }
@@ -465,13 +463,19 @@ class TimerControlCard(QFrame):
         if self.is_clip_locked:
             self.lbl_context.setText(f"پروژه: <b style='color:#94A3B8;'>{self.project_title}</b> | قطعه: <span style='color:#64748B;'>{self.clip_title} (مختومه)</span>")
         elif self.engine.is_running:
-            self.lbl_context.setText(f"پروژه فعال: <b style='color:#F8FAFC;'>{self.project_title}</b> | قطعه: <span style='color:#818CF8;'>{self.clip_title}</span> <span style='color:#64748B;'>({self.studio_title})</span>")
+            # نمایش شفاف مدت جلسه جاری در کنار نام کلیپ
+            sess_time = format_seconds_hms(self.engine.active_seconds)
+            self.lbl_context.setText(f"پروژه فعال: <b style='color:#F8FAFC;'>{self.project_title}</b> | قطعه: <span style='color:#818CF8;'>{self.clip_title}</span> <span style='color:#10B981;'>[جلسه جاری: {sess_time}]</span>")
         else:
             self.lbl_context.setText(f"پروژه انتخابی: <b style='color:#F8FAFC;'>{self.project_title}</b> | قطعه: <span style='color:#818CF8;'>{self.clip_title}</span>")
 
     def _on_timer_tick(self, snap: dict):
-        total_time_to_display = self.accumulated_spent_seconds + snap["active_seconds"]
+        # هنگام اجرای زنده: جمع کارکرد قبلی کلیپ با ثانیه‌های جلسه جاری
+        # به دلیل بازخوانی از دیتابیس در زمان توقف، جمع مضاعف به هیچ وجه رخ نمی‌دهد
+        current_sess_active = snap["active_seconds"] if (self.engine.is_running and not self.engine.is_paused) else 0
+        total_time_to_display = self.accumulated_spent_seconds + current_sess_active
         self._render_timer_display(total_time_to_display)
+        self._update_context_label()
 
     def update_display_state(self):
         self._update_context_label()
@@ -480,7 +484,6 @@ class TimerControlCard(QFrame):
             self.pulse_anim.stop()
             self.opacity_effect.setOpacity(1.0)
             
-            # دکمه شروع مخفی شده و دکمه بازگشایی ظاهر می‌شود
             self.btn_start.setVisible(False)
             self.btn_reopen.setVisible(True)
             self.btn_pause.setVisible(False)
@@ -525,7 +528,8 @@ class TimerControlCard(QFrame):
                     border-radius: 13px;
                     padding: 0 14px;
                 """)
-                self._render_timer_display(self.accumulated_spent_seconds + self.engine.active_seconds)
+                # در حالت Pause فقط زمان واقعی ذخیره شده نشان داده می‌شود
+                self._render_timer_display(self.accumulated_spent_seconds)
             else:
                 self.btn_pause.setVisible(True)
                 self.btn_resume.setVisible(False)

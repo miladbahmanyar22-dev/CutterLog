@@ -11,6 +11,15 @@ from typing import List, Dict, Any, Optional
 from config import APP_DATA_DIR
 from core.settings_manager import SettingsManager
 
+try:
+    from mutagen.mp3 import MP3
+    from mutagen.id3 import ID3, APIC
+    from mutagen.flac import FLAC
+    from mutagen.mp4 import MP4
+    HAS_MUTAGEN = True
+except ImportError:
+    HAS_MUTAGEN = False
+
 SUPPORTED_AUDIO_EXTS = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".wma", ".aiff"}
 VIRTUAL_INDEX_FILE = APP_DATA_DIR / "music_vault_refs.json"
 
@@ -63,27 +72,34 @@ def _remove_readonly(func, path, excinfo):
 
 
 def extract_audio_cover(file_path: str) -> Optional[bytes]:
-    """استخراج تصویر کاور تعبیه‌شده در فایل صوتی بدون نیاز به پکیج‌های سنگین جانبی"""
+    """استخراج امن و استاندارد تصویر کاور تعبیه‌شده در فایل صوتی بدون ایجاد خطای کنسول"""
+    if not HAS_MUTAGEN or not file_path or not os.path.exists(file_path):
+        return None
+
     try:
         ext = Path(file_path).suffix.lower()
-        if ext == ".mp3" and os.path.exists(file_path):
-            with open(file_path, "rb") as f:
-                data = f.read(500000)
-                apic_idx = data.find(b"APIC")
-                if apic_idx != -1:
-                    jpg_start = data.find(b"\xff\xd8\xff", apic_idx)
-                    if jpg_start != -1:
-                        jpg_end = data.find(b"\xff\xd9", jpg_start)
-                        if jpg_end != -1:
-                            return data[jpg_start:jpg_end + 2]
-                    
-                    png_start = data.find(b"\x89PNG\r\n\x1a\n", apic_idx)
-                    if png_start != -1:
-                        png_end = data.find(b"IEND\xaeB`\x82", png_start)
-                        if png_end != -1:
-                            return data[png_start:png_end + 8]
+
+        if ext == ".mp3":
+            audio = MP3(file_path, ID3=ID3)
+            if audio.tags:
+                for tag in audio.tags.values():
+                    if isinstance(tag, APIC):
+                        return bytes(tag.data)
+
+        elif ext == ".flac":
+            audio = FLAC(file_path)
+            if audio.pictures:
+                return bytes(audio.pictures[0].data)
+
+        elif ext in {".m4a", ".mp4", ".aac"}:
+            audio = MP4(file_path)
+            covs = audio.tags.get("covr") if audio.tags else None
+            if covs:
+                return bytes(covs[0])
+
     except Exception:
         pass
+
     return None
 
 

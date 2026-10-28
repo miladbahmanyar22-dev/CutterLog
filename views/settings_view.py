@@ -18,7 +18,7 @@ from sqlalchemy import select, text
 from config import open_path_in_os
 from database.db_manager import db
 from database.models import Client
-from core.settings_manager import SettingsManager, DEFAULT_CLIENT_MESSAGE_TEMPLATE
+from core.settings_manager import SettingsManager
 from core.audio_vault_manager import AudioVaultManager, get_vault_root_dir
 from core.icon_provider import IconProvider
 from core.signals import global_signals
@@ -28,6 +28,28 @@ from widgets.studio_dialog_base import StudioBaseDialog, StudioConfirmDialog
 from widgets.support_dialog import SupportDeveloperDialog
 from widgets.purge_center_widget import PurgeCenterWidget
 from views.about_view import AboutView
+
+
+NEW_DEFAULT_CLIENT_MESSAGE_TEMPLATE = """سلام {couple_names} عزیز 🌸
+امیدواریم حالتون عالی باشه.
+
+روند تدوین فیلم مراسم شما رسماً در استودیو {studio_name} آغاز شد.
+
+🎬 وضعیت پروژه: {workflow_status}
+📅 تاریخ مراسم: {event_date}
+⏳ موعد تقریبی تحویل نسخه اولیه: {approx_deadline}
+
+🎵 طراحی ریتم و انتخاب موسیقی:
+موسیقی در فیلم مراسم، بر اساس انرژی هر پلان، حس واقعی صحنه‌ها و ریتم اختصاصی حرکات دوربین انتخاب و سینک می‌شود تا فیلم حالتی پیوسته، جذاب و ماندگار داشته باشد. به همین دلیل پیشنهاد ما این است که با خیالی آسوده، انتخاب قطعات را به سلیقه تخصصی تیم تدوین بسپارید.
+با این حال، اگر آهنگ خاطره‌انگیز بسیار خاصی دارید، حداکثر تا ۲۴ ساعت آینده برای ما بفرستید تا در صورت هم‌خوانی با ریتم کلی فیلم، از آن استفاده شود.
+
+📌 بازبینی و اصلاحات نسخه اولیه:
+- مهلت بررسی تا ۳ روز کاری پس از تحویل پیش‌نمایش است.
+- اصلاحات باید دقیق همراه با دقیقه و ثانیه (تایم‌کد) ارسال شوند.
+- پس از تایید نهایی شما، نسخه اصلی و کامل تقدیم خواهد شد.
+{telegram_section}
+با احترام،
+تیم تدوین استودیو {studio_name}"""
 
 
 class SidebarNavButton(QFrame):
@@ -414,6 +436,148 @@ class QuickAmountDialog(StudioBaseDialog):
         self.accept()
 
 
+class EditStudioDialog(StudioBaseDialog):
+    """دیالوگ ویرایش مشخصات و شماره تماس استودیو / آتلیه"""
+    def __init__(self, client_id: int, company: str = "", manager: str = "", phone: str = "", parent=None):
+        super().__init__(parent=parent)
+        self.client_id = client_id
+        self.company_val = company or ""
+        self.manager_val = manager or ""
+        self.phone_val = phone or ""
+
+        self.setFixedWidth(460)
+        self.init_ui()
+
+    def init_ui(self):
+        self.build_header(
+            "ویرایش مشخصات استودیو",
+            "اصلاح نام برند، مدیریت و شماره تماس طرف قرارداد",
+            icon_name="edit",
+            icon_color="#6366F1"
+        )
+
+        self.container_layout.addWidget(QLabel("نام برند / آتلیه:*"))
+        self.input_company = QLineEdit(self.company_val)
+        self.input_company.setFixedHeight(36)
+        self.input_company.setPlaceholderText("نام برند استودیو...")
+        self.input_company.setStyleSheet("""
+            QLineEdit {
+                background-color: #161F30;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 6px;
+                padding: 0 12px;
+                font-family: 'Vazirmatn';
+                font-size: 12px;
+                color: #F8FAFC;
+            }
+            QLineEdit:focus {
+                border-color: #6366F1;
+                background-color: #1A2438;
+            }
+        """)
+        self.input_company.returnPressed.connect(self._save)
+        self.container_layout.addWidget(self.input_company)
+
+        self.container_layout.addWidget(QLabel("نام مدیریت (اختیاری):"))
+        self.input_manager = QLineEdit(self.manager_val)
+        self.input_manager.setFixedHeight(36)
+        self.input_manager.setPlaceholderText("نام و نام خانوادگی مدیر آتلیه...")
+        self.input_manager.setStyleSheet("""
+            QLineEdit {
+                background-color: #161F30;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 6px;
+                padding: 0 12px;
+                font-family: 'Vazirmatn';
+                font-size: 12px;
+                color: #F8FAFC;
+            }
+            QLineEdit:focus {
+                border-color: #6366F1;
+                background-color: #1A2438;
+            }
+        """)
+        self.input_manager.returnPressed.connect(self._save)
+        self.container_layout.addWidget(self.input_manager)
+
+        self.container_layout.addWidget(QLabel("شماره تماس (اختیاری):"))
+        self.input_phone = QLineEdit(self.phone_val)
+        self.input_phone.setFixedHeight(36)
+        self.input_phone.setPlaceholderText("شماره تماس استودیو...")
+        self.input_phone.setStyleSheet("""
+            QLineEdit {
+                background-color: #161F30;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 6px;
+                padding: 0 12px;
+                font-family: 'Vazirmatn';
+                font-size: 12px;
+                color: #F8FAFC;
+            }
+            QLineEdit:focus {
+                border-color: #6366F1;
+                background-color: #1A2438;
+            }
+        """)
+        self.input_phone.returnPressed.connect(self._save)
+        self.container_layout.addWidget(self.input_phone)
+
+        btn_box = QHBoxLayout()
+        btn_box.setSpacing(8)
+
+        btn_save = QPushButton("ذخیره تغییرات")
+        btn_save.setFixedHeight(36)
+        btn_save.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_save.setStyleSheet("""
+            QPushButton {
+                font-family: 'Vazirmatn';
+                background-color: #6366F1;
+                color: #FFFFFF;
+                font-weight: 700;
+                border: none;
+                border-radius: 6px;
+                font-size: 12px;
+            }
+            QPushButton:hover { background-color: #4F46E5; }
+        """)
+        btn_save.clicked.connect(self._save)
+        btn_box.addWidget(btn_save, stretch=2)
+
+        btn_cancel = QPushButton("انصراف")
+        btn_cancel.setFixedHeight(36)
+        btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_cancel.setStyleSheet("""
+            QPushButton {
+                font-family: 'Vazirmatn';
+                background-color: #161F30;
+                color: #94A3B8;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 6px;
+                font-size: 12px;
+            }
+            QPushButton:hover { color: #F8FAFC; background-color: #1E283D; }
+        """)
+        btn_cancel.clicked.connect(self.reject)
+        btn_box.addWidget(btn_cancel, stretch=1)
+
+        self.container_layout.addLayout(btn_box)
+
+    def _save(self):
+        comp = self.input_company.text().strip()
+        manager = self.input_manager.text().strip()
+        raw_phone = self.input_phone.text().strip()
+        phone = normalize_to_english_digits(raw_phone) if raw_phone else ""
+
+        if not comp and not manager:
+            StudioConfirmDialog.ask(self, "خطا در ثبت", "لطفاً حداقل نام برند یا نام مدیریت را وارد کنید.", icon_name="alert")
+            return
+
+        self.company_val = comp or manager
+        self.manager_val = manager or comp
+        self.phone_val = phone
+        self.accept()
+
+
 class SettingsView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -579,20 +743,27 @@ class SettingsView(QWidget):
         )
 
         self.txt_client_template = QTextEdit()
-        self.txt_client_template.setFixedHeight(120)
-        self.txt_client_template.setPlainText(self.settings.get("client_message_template", DEFAULT_CLIENT_MESSAGE_TEMPLATE))
-        self.txt_client_template.setStyleSheet("background-color: #161F30; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 10px; font-size: 12px; color: #F8FAFC; line-height: 1.5;")
+        self.txt_client_template.setFixedHeight(220)
+        
+        current_tpl = self.settings.get("client_message_template", "")
+        if not current_tpl or not current_tpl.strip():
+            current_tpl = NEW_DEFAULT_CLIENT_MESSAGE_TEMPLATE
+            self.settings["client_message_template"] = NEW_DEFAULT_CLIENT_MESSAGE_TEMPLATE
+
+        self.txt_client_template.setPlainText(current_tpl)
+        self.txt_client_template.setStyleSheet("background-color: #161F30; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 10px; font-size: 12px; color: #F8FAFC; line-height: 1.6;")
         self.txt_client_template.textChanged.connect(self._on_client_template_changed)
 
         tag_row = QHBoxLayout()
         tag_row.setSpacing(6)
         tags = [
             ("{couple_names}", "نام زوجین"),
-            ("{workflow_status}", "وضعیت پروژه"),
-            ("{progress_pct}", "درصد پیشرفت"),
+            ("{studio_name}", "نام استودیو"),
             ("{event_date}", "تاریخ مراسم"),
-            ("{editor_name}", "تدوین‌گر"),
-            ("{studio_name}", "نام استودیو")
+            ("{approx_deadline}", "موعد تقریبی"),
+            ("{progress_pct}", "درصد پیشرفت"),
+            ("{workflow_status}", "وضعیت پروژه"),
+            ("{telegram_section}", "بخش تلگرام")
         ]
         for tag, desc in tags:
             btn_tag = QPushButton(f"+ {desc}")
@@ -602,7 +773,7 @@ class SettingsView(QWidget):
             tag_row.addWidget(btn_tag)
         tag_row.addStretch()
 
-        btn_reset_tpl = QPushButton("بازنشانی به پیش‌فرض")
+        btn_reset_tpl = QPushButton("بازنشانی به پیش‌فرض جدید")
         btn_reset_tpl.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_reset_tpl.setStyleSheet("background: transparent; color: #F59E0B; border: none; font-size: 11px; font-weight: bold;")
         btn_reset_tpl.clicked.connect(self._reset_client_template)
@@ -636,10 +807,10 @@ class SettingsView(QWidget):
         self._persist_settings()
 
     def _reset_client_template(self):
-        self.txt_client_template.setPlainText(DEFAULT_CLIENT_MESSAGE_TEMPLATE)
-        self.settings["client_message_template"] = DEFAULT_CLIENT_MESSAGE_TEMPLATE
+        self.txt_client_template.setPlainText(NEW_DEFAULT_CLIENT_MESSAGE_TEMPLATE)
+        self.settings["client_message_template"] = NEW_DEFAULT_CLIENT_MESSAGE_TEMPLATE
         self._persist_settings()
-        global_signals.show_toast.emit("قالب پیام به حالت پیش‌فرض بازنشانی شد.", "info")
+        global_signals.show_toast.emit("قالب پیام به متن جدید و استاندارد بازنشانی شد.", "info")
 
     def _build_packages_studios_tab(self) -> QWidget:
         scroll = self._create_scrollable_container()
@@ -695,9 +866,11 @@ class SettingsView(QWidget):
         card_clips.add_setting_row(self.clips_grid_widget)
         layout.addWidget(card_clips)
 
-        card_studio = SettingsSectionCard("دایرکتوری استودیوها و آتلیه‌ها", "مدیریت آتلیه‌های طرف قرارداد و انتقال خودکار پروژه‌ها هنگام حذف")
+        # کارت دایرکتوری استودیوها با فیلد شماره تماس تمیز و بدون متن اضافه
+        card_studio = SettingsSectionCard("دایرکتوری استودیوها و آتلیه‌ها", "مدیریت آتلیه‌های طرف قرارداد و شماره تماس جهت درج در فاکتورها")
         add_studio_row = QHBoxLayout()
         add_studio_row.setSpacing(8)
+        
         self.input_studio_company = QLineEdit()
         self.input_studio_company.setFixedHeight(34)
         self.input_studio_company.setPlaceholderText("نام آتلیه / برند...")
@@ -709,6 +882,12 @@ class SettingsView(QWidget):
         self.input_studio_manager.setPlaceholderText("نام مدیریت...")
         self.input_studio_manager.setStyleSheet("background-color: #161F30; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 0 10px; font-size: 12px; color: #F8FAFC;")
         add_studio_row.addWidget(self.input_studio_manager, stretch=2)
+
+        self.input_studio_phone = QLineEdit()
+        self.input_studio_phone.setFixedHeight(34)
+        self.input_studio_phone.setPlaceholderText("شماره تماس...")
+        self.input_studio_phone.setStyleSheet("background-color: #161F30; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 0 10px; font-size: 12px; color: #F8FAFC;")
+        add_studio_row.addWidget(self.input_studio_phone, stretch=2)
 
         btn_add_s = QPushButton("ثبت استودیو")
         btn_add_s.setFixedHeight(34)
@@ -931,10 +1110,6 @@ class SettingsView(QWidget):
         global_signals.show_toast.emit("مهر/امضای دیجیتال حذف گردید.", "info")
 
     def _build_security_data_tab(self) -> QWidget:
-        """
-        بازطراحی پیشرفته و استودیویی بخش ایمنی، مسیرها و نسخه‌برداری
-        الهام‌گرفته از استایل گلس‌مورفیک مرکز پاک‌سازی
-        """
         scroll = self._create_scrollable_container()
         container = scroll.widget()
         layout = container.layout()
@@ -942,7 +1117,7 @@ class SettingsView(QWidget):
 
         chk_path = IconProvider.get_checkbox_checked_icon_path()
 
-        # ۱. بنر وضعیت سلامت مخزن داده (Vault & Data Health Slate)
+        # ۱. بنر وضعیت سلامت مخزن داده
         health_banner = QFrame()
         health_banner.setFixedHeight(68)
         health_banner.setStyleSheet("""
@@ -1208,7 +1383,7 @@ class SettingsView(QWidget):
         pw_lay.addWidget(copy_mode_card)
         layout.addWidget(paths_wrap)
 
-        # ۳. کارت کنسول پشتیبان‌گیری و بازیابی استودیو (Studio Backup & Disaster Recovery)
+        # ۳. کارت کنسول پشتیبان‌گیری و بازیابی استودیو
         backup_card = QFrame()
         backup_card.setStyleSheet("""
             QFrame#BackupConsoleCardFrame {
@@ -1490,17 +1665,57 @@ class SettingsView(QWidget):
                 lbl_name.setStyleSheet("font-family: 'Vazirmatn'; color: #F8FAFC; font-size: 11.5px; border: none;")
                 info_col.addWidget(lbl_name)
 
+                sub_details = []
                 if c.company and c.full_name and c.company != c.full_name:
-                    lbl_sub = QLabel(f"مدیریت: {c.full_name}")
+                    sub_details.append(f"مدیریت: {c.full_name}")
+                if c.phone:
+                    sub_details.append(f"تلفن: {to_persian_numbers(c.phone)}")
+
+                if sub_details:
+                    lbl_sub = QLabel(" | ".join(sub_details))
                     lbl_sub.setStyleSheet("font-family: 'Vazirmatn'; color: #94A3B8; font-size: 10px; border: none;")
                     info_col.addWidget(lbl_sub)
 
                 c_lay.addLayout(info_col, stretch=1)
 
+                btn_edit = QPushButton("✎")
+                btn_edit.setFixedSize(22, 22)
+                btn_edit.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn_edit.setToolTip("ویرایش مشخصات و شماره تماس استودیو")
+                btn_edit.setStyleSheet("""
+                    QPushButton {
+                        background: transparent;
+                        color: #818CF8;
+                        border: none;
+                        font-size: 12px;
+                        font-weight: bold;
+                    }
+                    QPushButton:hover {
+                        background-color: rgba(99, 102, 241, 0.18);
+                        border-radius: 4px;
+                        color: #A5B4FC;
+                    }
+                """)
+                btn_edit.clicked.connect(lambda _, cid=c.id: self._edit_studio_by_id(cid))
+                c_lay.addWidget(btn_edit)
+
                 btn_del = QPushButton("×")
                 btn_del.setFixedSize(22, 22)
                 btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
-                btn_del.setStyleSheet("background: transparent; color: #EF4444; border: none; font-size: 15px; font-weight: bold;")
+                btn_del.setToolTip("حذف استودیو")
+                btn_del.setStyleSheet("""
+                    QPushButton {
+                        background: transparent;
+                        color: #EF4444;
+                        border: none;
+                        font-size: 15px;
+                        font-weight: bold;
+                    }
+                    QPushButton:hover {
+                        background-color: rgba(239, 68, 68, 0.18);
+                        border-radius: 4px;
+                    }
+                """)
                 btn_del.clicked.connect(lambda _, cid=c.id: self._delete_studio_by_id(cid))
                 c_lay.addWidget(btn_del)
 
@@ -1653,22 +1868,55 @@ class SettingsView(QWidget):
     def _add_studio_to_db(self):
         comp = self.input_studio_company.text().strip()
         manager = self.input_studio_manager.text().strip()
+        raw_phone = self.input_studio_phone.text().strip()
+        phone = normalize_to_english_digits(raw_phone) if raw_phone else None
+        
         if not comp and not manager:
             StudioConfirmDialog.ask(self.window(), "خطا در ثبت", "لطفاً نام آتلیه یا نام مدیریت را وارد کنید.", icon_name="alert")
             return
 
         with db.get_session() as session:
-            client = Client(full_name=manager or comp, company=comp or manager)
+            client = Client(
+                full_name=manager or comp, 
+                company=comp or manager,
+                phone=phone
+            )
             session.add(client)
             session.commit()
             client_id = client.id
 
         self.input_studio_company.clear()
         self.input_studio_manager.clear()
+        self.input_studio_phone.clear()
         self._refresh_studios_grid()
         global_signals.client_balance_updated.emit(client_id)
         global_signals.settings_updated.emit()
         global_signals.show_toast.emit(f"استودیوی «{comp or manager}» با موفقیت ثبت شد.", "success")
+
+    def _edit_studio_by_id(self, client_id: int):
+        with db.get_session() as session:
+            client = session.get(Client, client_id)
+            if not client:
+                return
+            company = client.company or ""
+            manager = client.full_name or ""
+            phone = client.phone or ""
+
+        diag = EditStudioDialog(client_id, company=company, manager=manager, phone=phone, parent=self.window())
+        if diag.exec():
+            with db.get_session() as session:
+                target_client = session.get(Client, client_id)
+                if target_client:
+                    target_client.company = diag.company_val
+                    target_client.full_name = diag.manager_val
+                    target_client.phone = diag.phone_val or None
+                    session.commit()
+
+            self._refresh_studios_grid()
+            global_signals.client_balance_updated.emit(client_id)
+            global_signals.project_updated.emit(0)
+            global_signals.settings_updated.emit()
+            global_signals.show_toast.emit("مشخصات استودیو با موفقیت به‌روزرسانی شد.", "success")
 
     def _delete_studio_by_id(self, client_id: int):
         with db.get_session() as session:

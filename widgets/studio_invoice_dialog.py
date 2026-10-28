@@ -2,17 +2,20 @@
 # FILE: widgets/studio_invoice_dialog.py
 # ==================================================
 import os
+import hmac
+import hashlib
 import traceback
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set
+import jdatetime
 
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QFrame, QScrollArea, QWidget, 
-    QGridLayout, QFileDialog, QSizePolicy, QCheckBox, QComboBox
+    QGridLayout, QFileDialog, QSizePolicy, QCheckBox, QComboBox, QLineEdit
 )
-from PySide6.QtCore import Qt, QSize, QPoint
+from PySide6.QtCore import Qt, QSize, QPoint, QRectF
 from PySide6.QtGui import (
     QPixmap, QImage, QPainter, QColor, QFont, QPen, QBrush, QLinearGradient, QRegion
 )
@@ -22,15 +25,18 @@ from database.db_manager import db
 from core.settings_manager import SettingsManager
 from core.project_controller import ProjectController
 from core.finance_controller import FinanceController
-from core.persian_utils import format_toman, to_persian_numbers, gregorian_to_jalali
+from core.persian_utils import (
+    format_toman, to_persian_numbers, gregorian_to_jalali, 
+    parse_jalali_text, normalize_to_english_digits
+)
 from core.icon_provider import IconProvider
 from widgets.studio_dialog_base import StudioBaseDialog, StudioConfirmDialog
 
 
 class StudioInvoiceImageExporter:
-    """موتور رندر باکیفیت و پایدار برای خروجی تصویر فاکتور"""
+    """موتور رندر با رزولوشن بسیار بالا جهت حفظ وضوح کامل متون هنگام زوم"""
     @staticmethod
-    def export_widget_to_image(target_widget: QWidget, output_path: str, scale_factor: float = 2.0) -> bool:
+    def export_widget_to_image(target_widget: QWidget, output_path: str, scale_factor: float = 3.5) -> bool:
         painter = None
         try:
             if not target_widget:
@@ -85,8 +91,7 @@ class StudioInvoiceDialog(StudioBaseDialog):
         self.resize(1040, 860)
 
         self.include_carry_over = True
-        self.selected_project_ids: set[int] = set()
-        self.is_exporting_image = False
+        self.selected_project_ids: Set[int] = set()
 
         self._load_client_data()
         self.settings = SettingsManager.load_settings()
@@ -132,12 +137,11 @@ class StudioInvoiceDialog(StudioBaseDialog):
 
         self.build_header(
             f"صدور صورت‌حساب رسمی: {self.client_name}", 
-            f"امکان تنظیم اقلام فاکتور، تفکیک پروژه‌ها و درج مانده بدهی گذشته | تاریخ: {today_str}",
+            f"تنظیم اقلام فاکتور، تفکیک پروژه‌ها و گزارش مانده بدهی معوق | تاریخ: {today_str}",
             icon_name="dollar", 
             icon_color="#10B981"
         )
 
-        # نوار کنترل بالای فاکتور
         control_bar = QFrame()
         control_bar.setStyleSheet("""
             QFrame {
@@ -153,7 +157,7 @@ class StudioInvoiceDialog(StudioBaseDialog):
                 background: transparent;
                 border: none;
             }
-            QComboBox {
+            QComboBox, QLineEdit {
                 font-family: 'Vazirmatn';
                 background-color: #161F30;
                 border: 1px solid rgba(255, 255, 255, 0.08);
@@ -161,6 +165,9 @@ class StudioInvoiceDialog(StudioBaseDialog):
                 padding: 4px 10px;
                 color: #F8FAFC;
                 font-size: 11.5px;
+            }
+            QComboBox:focus, QLineEdit:focus {
+                border-color: #6366F1;
             }
             QCheckBox {
                 font-family: 'Vazirmatn';
@@ -172,13 +179,16 @@ class StudioInvoiceDialog(StudioBaseDialog):
         """)
         c_bar_layout = QHBoxLayout(control_bar)
         c_bar_layout.setContentsMargins(14, 8, 14, 8)
-        c_bar_layout.setSpacing(12)
+        c_bar_layout.setSpacing(10)
 
-        c_bar_layout.addWidget(QLabel("حالت فاکتور:"))
+        c_bar_layout.addWidget(QLabel("دامنه صورت‌حساب:"))
         self.combo_scope = QComboBox()
         self.combo_scope.addItem("فقط پروژه‌های تسویه‌نشده و باز (پیشنهادی)", "unsettled_only")
-        self.combo_scope.addItem("تک‌پروژه انتخابی", "single_project")
-        self.combo_scope.addItem("صورت‌حساب کل حساب (شامل پروژه‌های تسویه‌شده)", "all_projects")
+        self.combo_scope.addItem("تک‌پروژه مشخص", "single_project")
+        self.combo_scope.addItem("پروژه‌های این ماه (شمسی)", "this_month")
+        self.combo_scope.addItem("پروژه‌های سال جاری", "this_year")
+        self.combo_scope.addItem("بازه زمانی دلخواه...", "custom_range")
+        self.combo_scope.addItem("صورت‌حساب کل حساب (تمام ادوار)", "all_projects")
         self.combo_scope.currentIndexChanged.connect(self._on_scope_changed)
         c_bar_layout.addWidget(self.combo_scope)
 
@@ -187,16 +197,37 @@ class StudioInvoiceDialog(StudioBaseDialog):
         self.combo_single_proj.currentIndexChanged.connect(self._on_single_proj_selected)
         c_bar_layout.addWidget(self.combo_single_proj)
 
+        self.custom_date_widget = QWidget()
+        self.custom_date_widget.setStyleSheet("background: transparent;")
+        cd_lay = QHBoxLayout(self.custom_date_widget)
+        cd_lay.setContentsMargins(0, 0, 0, 0)
+        cd_lay.setSpacing(6)
+
+        cd_lay.addWidget(QLabel("از:"))
+        self.inp_start_date = QLineEdit()
+        self.inp_start_date.setFixedWidth(82)
+        self.inp_start_date.setPlaceholderText("۱۴۰۵/۰۱/۰۱")
+        self.inp_start_date.textChanged.connect(self._on_custom_dates_changed)
+        cd_lay.addWidget(self.inp_start_date)
+
+        cd_lay.addWidget(QLabel("تا:"))
+        self.inp_end_date = QLineEdit()
+        self.inp_end_date.setFixedWidth(82)
+        self.inp_end_date.setPlaceholderText("۱۴۰۵/۱۲/۲۹")
+        self.inp_end_date.textChanged.connect(self._on_custom_dates_changed)
+        cd_lay.addWidget(self.inp_end_date)
+
+        self.custom_date_widget.setVisible(False)
+        c_bar_layout.addWidget(self.custom_date_widget)
+
         self.chk_carry_over = QCheckBox("نمایش مانده معوق از پروژه‌های قبلی")
         self.chk_carry_over.setChecked(True)
         self.chk_carry_over.toggled.connect(self._on_carry_over_toggled)
         c_bar_layout.addWidget(self.chk_carry_over)
 
         c_bar_layout.addStretch()
-
         self.container_layout.addWidget(control_bar)
 
-        # اسکرول و بوم فاکتور
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -227,7 +258,6 @@ class StudioInvoiceDialog(StudioBaseDialog):
         scroll.setWidget(scroll_outer_container)
         self.container_layout.addWidget(scroll, stretch=1)
 
-        # دکمه‌های اقدام
         action_bar = QHBoxLayout()
         action_bar.setSpacing(10)
 
@@ -299,6 +329,8 @@ class StudioInvoiceDialog(StudioBaseDialog):
         full_summary = FinanceController.get_studio_debt_summary(self.client_id)
         all_projs = full_summary.get("all_projects", [])
 
+        self.custom_date_widget.setVisible(mode == "custom_range")
+
         if mode == "single_project":
             self.combo_single_proj.setVisible(True)
             self.chk_carry_over.setEnabled(True)
@@ -308,11 +340,58 @@ class StudioInvoiceDialog(StudioBaseDialog):
             self.combo_single_proj.setVisible(False)
             self.chk_carry_over.setEnabled(True)
             self.selected_project_ids = {p["id"] for p in full_summary.get("unsettled_projects", [])}
+        elif mode == "this_month":
+            self.combo_single_proj.setVisible(False)
+            self.chk_carry_over.setEnabled(True)
+            start_g, end_g = FinanceController.get_date_range_bounds("this_month")
+            self.selected_project_ids = {
+                p["id"] for p in all_projs 
+                if (p.get("created_at") and start_g <= p["created_at"] <= end_g)
+            }
+        elif mode == "this_year":
+            self.combo_single_proj.setVisible(False)
+            self.chk_carry_over.setEnabled(True)
+            start_g, end_g = FinanceController.get_date_range_bounds("this_year")
+            self.selected_project_ids = {
+                p["id"] for p in all_projs 
+                if (p.get("created_at") and start_g <= p["created_at"] <= end_g)
+            }
+        elif mode == "custom_range":
+            self.combo_single_proj.setVisible(False)
+            self.chk_carry_over.setEnabled(True)
+            self._filter_custom_dates(all_projs)
+            return
         else:  # all_projects
             self.combo_single_proj.setVisible(False)
             self.chk_carry_over.setEnabled(False)
             self.selected_project_ids = {p["id"] for p in all_projs}
 
+        self._refresh_invoice_calculation()
+
+    def _on_custom_dates_changed(self):
+        full_summary = FinanceController.get_studio_debt_summary(self.client_id)
+        all_projs = full_summary.get("all_projects", [])
+        self._filter_custom_dates(all_projs)
+
+    def _filter_custom_dates(self, all_projs: List[dict]):
+        s_date = parse_jalali_text(self.inp_start_date.text().strip())
+        e_date = parse_jalali_text(self.inp_end_date.text().strip())
+
+        start_dt = datetime.combine(s_date.togregorian(), datetime.min.time()) if s_date else None
+        end_dt = datetime.combine(e_date.togregorian(), datetime.max.time()) if e_date else None
+
+        filtered = set()
+        for p in all_projs:
+            p_dt = p.get("created_at")
+            if not p_dt:
+                continue
+            if start_dt and p_dt < start_dt:
+                continue
+            if end_dt and p_dt > end_dt:
+                continue
+            filtered.add(p["id"])
+
+        self.selected_project_ids = filtered
         self._refresh_invoice_calculation()
 
     def _on_single_proj_selected(self):
@@ -417,7 +496,8 @@ class StudioInvoiceDialog(StudioBaseDialog):
         p_grid.addWidget(self._make_clean_label("طرف دوم (کارفرما / استودیو):", "font-family: 'Vazirmatn'; font-size: 11px; font-weight: bold; color: #818CF8;"), 0, 1)
         client_desc = f"{self.client_name}" + (f" (مدیریت: {self.manager_name})" if self.manager_name else "")
         p_grid.addWidget(self._make_clean_label(client_desc, "font-family: 'Vazirmatn'; font-size: 12px; font-weight: bold; color: #F8FAFC;"), 1, 1)
-        p_grid.addWidget(self._make_clean_label(f"شماره تماس: {to_persian_numbers(self.client_phone)}", "font-family: 'Vazirmatn'; font-size: 11px; color: #94A3B8;"), 2, 1)
+        client_phone_display = to_persian_numbers(self.client_phone) if (self.client_phone and self.client_phone != "-") else "ثبت‌نشده"
+        p_grid.addWidget(self._make_clean_label(f"شماره تماس: {client_phone_display}", "font-family: 'Vazirmatn'; font-size: 11px; color: #94A3B8;"), 2, 1)
 
         p_grid.setColumnStretch(0, 1)
         p_grid.setColumnStretch(1, 1)
@@ -452,7 +532,7 @@ class StudioInvoiceDialog(StudioBaseDialog):
         ]
 
         th_bg = QFrame()
-        th_bg.setFixedHeight(32)
+        th_bg.setFixedHeight(34)
         th_bg.setStyleSheet("background-color: #161F30; border-radius: 6px;")
         t_grid.addWidget(th_bg, 0, 0, 1, 7)
 
@@ -471,7 +551,7 @@ class StudioInvoiceDialog(StudioBaseDialog):
 
         if not display_projects:
             lbl_empty = self._make_clean_label(
-                "هیچ پروژه معوق یا باز برای این استودیو وجود ندارد (تمامی پروژه‌ها کاملاً تسویه شده‌اند).",
+                "هیچ پروژه معوق یا مطابق بازه زمانی انتخابی یافت نشد (تمامی حساب‌ها تسویه می‌باشند).",
                 "font-family: 'Vazirmatn'; font-size: 12px; color: #10B981; padding: 18px 0;"
             )
             lbl_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -479,9 +559,9 @@ class StudioInvoiceDialog(StudioBaseDialog):
         else:
             for idx, p_summary in enumerate(display_projects):
                 row_idx = idx + 1
-                row_bg_color = "transparent" if idx % 2 == 0 else "rgba(255, 255, 255, 0.015)"
+                row_bg_color = "rgba(255, 255, 255, 0.02)" if idx % 2 == 1 else "transparent"
                 row_frame = QFrame()
-                row_frame.setStyleSheet(f"background-color: {row_bg_color}; border-radius: 4px;")
+                row_frame.setStyleSheet(f"background-color: {row_bg_color}; border-radius: 5px;")
                 t_grid.addWidget(row_frame, row_idx, 0, 1, 7)
 
                 p_num = f"{p_summary.get('project_number', idx + 1):03d}"
@@ -494,37 +574,37 @@ class StudioInvoiceDialog(StudioBaseDialog):
                 rem_color = "#F59E0B" if rem_val > 0 else "#10B981"
                 rem_text = format_toman(rem_val) if rem_val > 0 else "تسویه ✓"
 
-                lbl_r1 = self._make_clean_label(to_persian_numbers(row_idx), "font-family: 'Vazirmatn'; font-size: 11px; color: #64748B;")
+                lbl_r1 = self._make_clean_label(to_persian_numbers(row_idx), "font-family: 'Vazirmatn'; font-size: 11px; color: #64748B; padding: 4px 0;")
                 lbl_r1.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 t_grid.addWidget(lbl_r1, row_idx, 0)
 
-                lbl_p_name = self._make_clean_label(f"<b>{p_summary.get('title', '-')}</b> (#{to_persian_numbers(p_num)})", "font-family: 'Vazirmatn'; font-size: 11.5px; color: #F8FAFC;")
+                lbl_p_name = self._make_clean_label(f"<b>{p_summary.get('title', '-')}</b> (#{to_persian_numbers(p_num)})", "font-family: 'Vazirmatn'; font-size: 11.5px; color: #F8FAFC; padding: 4px 0;")
                 lbl_p_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 t_grid.addWidget(lbl_p_name, row_idx, 1)
 
-                lbl_r3 = self._make_clean_label(event_str, "font-family: 'Vazirmatn'; font-size: 11px; color: #94A3B8;")
+                lbl_r3 = self._make_clean_label(event_str, "font-family: 'Vazirmatn'; font-size: 11px; color: #94A3B8; padding: 4px 0;")
                 lbl_r3.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 t_grid.addWidget(lbl_r3, row_idx, 2)
 
-                lbl_r4 = self._make_clean_label(service_text, "font-family: 'Vazirmatn'; font-size: 11px; font-weight: 600; color: #38BDF8;")
+                lbl_r4 = self._make_clean_label(service_text, "font-family: 'Vazirmatn'; font-size: 11px; font-weight: 600; color: #38BDF8; padding: 4px 0;")
                 lbl_r4.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 t_grid.addWidget(lbl_r4, row_idx, 3)
 
-                lbl_r5 = self._make_clean_label(format_toman(p_summary.get("total_fee", 0)), "font-family: 'Vazirmatn'; font-size: 11px; color: #F8FAFC;")
+                lbl_r5 = self._make_clean_label(format_toman(p_summary.get("total_fee", 0)), "font-family: 'Vazirmatn'; font-size: 11px; color: #F8FAFC; padding: 4px 0;")
                 lbl_r5.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 t_grid.addWidget(lbl_r5, row_idx, 4)
 
-                lbl_r6 = self._make_clean_label(format_toman(p_summary.get("total_paid", 0)), "font-family: 'Vazirmatn'; font-size: 11px; color: #10B981;")
+                lbl_r6 = self._make_clean_label(format_toman(p_summary.get("total_paid", 0)), "font-family: 'Vazirmatn'; font-size: 11px; color: #10B981; padding: 4px 0;")
                 lbl_r6.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 t_grid.addWidget(lbl_r6, row_idx, 5)
 
-                lbl_r7 = self._make_clean_label(rem_text, f"font-family: 'Vazirmatn'; font-size: 11.5px; font-weight: 800; color: {rem_color};")
+                lbl_r7 = self._make_clean_label(rem_text, f"font-family: 'Vazirmatn'; font-size: 11.5px; font-weight: 800; color: {rem_color}; padding: 4px 0;")
                 lbl_r7.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 t_grid.addWidget(lbl_r7, row_idx, 6)
 
         self.c_lay.addWidget(table_card)
 
-        # ۴. پنل اطلاعات بانکی و محاسبات نهایی
+        # ۴. پنل متقارن مشخصات بانکی، مهر رسمی و کادر بازطراحی‌شده محاسبات مالی
         bottom_panel = QHBoxLayout()
         bottom_panel.setSpacing(14)
 
@@ -532,108 +612,243 @@ class StudioInvoiceDialog(StudioBaseDialog):
         bank_plate.setStyleSheet("background-color: #121826; border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px;")
         bp_lay = QVBoxLayout(bank_plate)
         bp_lay.setContentsMargins(16, 12, 16, 12)
-        bp_lay.setSpacing(6)
+        bp_lay.setSpacing(8)
 
         bp_lay.addWidget(self._make_clean_label("اطلاعات واریز و تسویه حساب شتاب:", "font-family: 'Vazirmatn'; font-size: 11.5px; font-weight: 800; color: #818CF8;"))
 
-        card_num = self.settings.get("card_number") or "ثبت‌نشده در تنظیمات"
-        iban_num = self.settings.get("iban") or "ثبت‌نشده در تنظیمات"
+        raw_card = (self.settings.get("card_number") or "").replace(" ", "").replace("-", "").strip()
+        card_number_clean = raw_card if raw_card else "ثبت‌نشده در تنظیمات"
 
-        card_box = QFrame()
-        card_box.setStyleSheet("background-color: #0E131F; border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 6px;")
-        cb_lay = QVBoxLayout(card_box)
-        cb_lay.setContentsMargins(10, 6, 10, 6)
-        cb_lay.setSpacing(2)
-        cb_lay.addWidget(self._make_clean_label(f"شماره کارت: <b style='color:#FBBF24; letter-spacing:1px;'>{card_num}</b>", "font-family: 'Segoe UI', monospace; font-size: 12px; color: #94A3B8;"))
-        cb_lay.addWidget(self._make_clean_label(f"شماره شبا: {iban_num}", "font-family: 'Segoe UI', monospace; font-size: 10.5px; color: #64748B;"))
-        bp_lay.addWidget(card_box)
+        raw_iban = (self.settings.get("iban") or "").replace(" ", "").replace("-", "").strip()
+        iban_clean = raw_iban if raw_iban else "ثبت‌نشده در تنظیمات"
 
-        lbl_legal_clause = self._make_clean_label(
-            "«کلیه حقوق مادی و معنوی راش‌ها و خروجی‌های نهایی تا زمان تسویه کامل متعلق به تدوین‌گر می‌باشد. پس از تسویه کامل حساب، مجوز استفاده و آرشیو اثر به کارفرما واگذار می‌گردد.»",
-            "font-family: 'Vazirmatn'; font-size: 10px; color: #94A3B8; line-height: 1.5; font-weight: 500;"
+        # کادر شماره کارت: عنوان در راست قفل و عدد در چپ قفل
+        card_box_item = QFrame()
+        card_box_item.setFixedHeight(36)
+        card_box_item.setStyleSheet("background-color: #0E131F; border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 6px;")
+        cbi_lay = QHBoxLayout(card_box_item)
+        cbi_lay.setContentsMargins(14, 0, 14, 0)
+        cbi_lay.setSpacing(10)
+        cbi_lay.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        lbl_c_tag = self._make_clean_label("شماره کارت جهت واریز:", "font-family: 'Vazirmatn'; font-size: 11.5px; color: #94A3B8;")
+        cbi_lay.addWidget(lbl_c_tag)
+        cbi_lay.addStretch()
+
+        lbl_c_num = self._make_clean_label(card_number_clean, "font-family: 'Segoe UI', monospace; font-size: 14px; font-weight: 800; color: #FBBF24; letter-spacing: 0.5px;")
+        lbl_c_num.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        cbi_lay.addWidget(lbl_c_num)
+        bp_lay.addWidget(card_box_item)
+
+        # کادر شماره شبا: عنوان در راست قفل و عدد در چپ قفل
+        iban_box_item = QFrame()
+        iban_box_item.setFixedHeight(36)
+        iban_box_item.setStyleSheet("background-color: #0E131F; border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 6px;")
+        ibi_lay = QHBoxLayout(iban_box_item)
+        ibi_lay.setContentsMargins(14, 0, 14, 0)
+        ibi_lay.setSpacing(10)
+        ibi_lay.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        lbl_i_tag = self._make_clean_label("شماره شبا حساب:", "font-family: 'Vazirmatn'; font-size: 11.5px; color: #94A3B8;")
+        ibi_lay.addWidget(lbl_i_tag)
+        ibi_lay.addStretch()
+
+        lbl_ib = self._make_clean_label(iban_clean, "font-family: 'Segoe UI', monospace; font-size: 12.5px; font-weight: 700; color: #CBD5E1; letter-spacing: 0.5px;")
+        lbl_ib.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        ibi_lay.addWidget(lbl_ib)
+        bp_lay.addWidget(iban_box_item)
+
+        # ردیف تعهدات حقوقی هم‌تراز (Justified) به همراه پلاک درشت مهر و امضا
+        legal_and_seal_row = QHBoxLayout()
+        legal_and_seal_row.setSpacing(14)
+        legal_and_seal_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        lbl_legal_clause = QLabel(
+            "«کلیه حقوق مادی و معنوی، سورس پروژه‌های تدوین و راش‌های خام تا زمان تسویه نهایی حساب متعلق به تدوین‌گر می‌باشد. "
+            "پس از تسویه کامل این صورت‌حساب، مجوز استفاده و تحویل مستر به استودیو واگذار گردیده و به دلیل محدودیت فضای هارد، "
+            "نگهداری راش‌ها و آرشیو پروژه پس از ۷ روز از تاریخ تحویل، به کلی از تعهد تدوین‌گر خارج خواهد بود.»"
         )
         lbl_legal_clause.setWordWrap(True)
-        bp_lay.addWidget(lbl_legal_clause)
+        lbl_legal_clause.setAlignment(Qt.AlignmentFlag.AlignJustify)
+        lbl_legal_clause.setStyleSheet("""
+            QLabel {
+                font-family: 'Vazirmatn';
+                font-size: 10px;
+                color: #94A3B8;
+                line-height: 1.68;
+                font-weight: 500;
+                background: transparent;
+                border: none;
+            }
+        """)
+        legal_and_seal_row.addWidget(lbl_legal_clause, stretch=1)
 
+        sign_path = self.settings.get("studio_signature_path", "")
+        if sign_path and Path(sign_path).exists():
+            try:
+                sign_wrapper_col = QVBoxLayout()
+                sign_wrapper_col.setSpacing(3)
+                sign_wrapper_col.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+                lbl_sign_outer_title = self._make_clean_label(
+                    "مهر و امضای تدوین‌گر", 
+                    "font-family: 'Vazirmatn'; font-size: 9.5px; font-weight: 700; color: #818CF8;"
+                )
+                lbl_sign_outer_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                sign_wrapper_col.addWidget(lbl_sign_outer_title)
+
+                sign_plate = QFrame()
+                sign_plate.setFixedSize(185, 82)
+                sign_plate.setStyleSheet("background-color: #0E131F; border: 1px dashed rgba(99, 102, 241, 0.45); border-radius: 8px;")
+                sp_lay = QVBoxLayout(sign_plate)
+                sp_lay.setContentsMargins(6, 6, 6, 6)
+                sp_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+                s_img = QLabel()
+                s_img.setStyleSheet("background: transparent !important; border: none !important;")
+                s_img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                s_img.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+                
+                orig_sign_pix = QPixmap(sign_path)
+                s_img.setPixmap(orig_sign_pix.scaled(170, 70, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+                sp_lay.addWidget(s_img)
+
+                sign_wrapper_col.addWidget(sign_plate)
+                legal_and_seal_row.addLayout(sign_wrapper_col)
+            except Exception:
+                pass
+
+        bp_lay.addLayout(legal_and_seal_row)
         bottom_panel.addWidget(bank_plate, stretch=3)
 
+        # =========================================================================
+        # بازطراحی کادر محاسبات مالی: کادر تسویه بزرگ و کشیده به همراه عدد بزرگ وسط‌چین
+        # =========================================================================
         calc_box = QFrame()
-        calc_box.setStyleSheet("background-color: #121826; border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px;")
+        calc_box.setStyleSheet("""
+            QFrame {
+                background-color: #121826;
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                border-radius: 8px;
+            }
+        """)
         calc_lay = QVBoxLayout(calc_box)
-        calc_lay.setContentsMargins(18, 12, 18, 12)
+        calc_lay.setContentsMargins(14, 12, 14, 12)
         calc_lay.setSpacing(6)
+
+        # هدر بالای کارت محاسبات
+        calc_top_header = QHBoxLayout()
+        calc_top_header.setContentsMargins(2, 0, 2, 0)
+        calc_top_header.setSpacing(6)
+        
+        lbl_calc_head = self._make_clean_label("صورت‌وضعیت و جمع کل فاکتور:", "font-family: 'Vazirmatn'; font-size: 11.5px; font-weight: 800; color: #818CF8;")
+        calc_top_header.addWidget(lbl_calc_head)
+        calc_top_header.addStretch()
 
         tot_fee = summary.get("total_fee", 0)
         tot_paid = summary.get("total_paid", 0)
         current_rem = summary.get("total_remaining", 0)
         prior_debt = summary.get("prior_unsettled_debt", 0)
-
-        r_fee = QHBoxLayout()
-        r_fee.addWidget(self._make_clean_label("ارزش اقلام انتخابی:", "font-family: 'Vazirmatn'; font-size: 11px; color: #94A3B8;"))
-        r_fee.addStretch()
-        r_fee.addWidget(self._make_clean_label(format_toman(tot_fee), "font-family: 'Vazirmatn'; font-size: 11.5px; color: #F8FAFC;"))
-        calc_lay.addLayout(r_fee)
-
-        r_paid = QHBoxLayout()
-        r_paid.addWidget(self._make_clean_label("دریافتی اقلام انتخابی:", "font-family: 'Vazirmatn'; font-size: 11px; color: #94A3B8;"))
-        r_paid.addStretch()
-        r_paid.addWidget(self._make_clean_label(format_toman(tot_paid), "font-family: 'Vazirmatn'; font-size: 11.5px; color: #10B981;"))
-        calc_lay.addLayout(r_paid)
-
-        if self.include_carry_over and prior_debt > 0:
-            r_prior = QHBoxLayout()
-            r_prior.addWidget(self._make_clean_label("مانده بدهی از پروژه‌های قبلی:", "font-family: 'Vazirmatn'; font-size: 11px; color: #FB923C;"))
-            r_prior.addStretch()
-            r_prior.addWidget(self._make_clean_label(format_toman(prior_debt), "font-family: 'Vazirmatn'; font-size: 11.5px; color: #FB923C;"))
-            calc_lay.addLayout(r_prior)
-
-        div_calc = QFrame()
-        div_calc.setFrameShape(QFrame.Shape.HLine)
-        div_calc.setFixedHeight(1)
-        div_calc.setStyleSheet("background-color: rgba(255, 255, 255, 0.08); border: none;")
-        calc_lay.addWidget(div_calc)
-
         final_payable = current_rem + (prior_debt if self.include_carry_over else 0)
 
+        paid_ratio_pct = int((tot_paid / tot_fee) * 100) if tot_fee > 0 else 100
+        lbl_pct_tag = self._make_clean_label(
+            f"{to_persian_numbers(paid_ratio_pct)}٪ وصول",
+            "font-family: 'Vazirmatn'; font-size: 9.5px; font-weight: 700; color: #10B981; "
+            "background-color: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.25); "
+            "border-radius: 4px; padding: 1px 6px;"
+        )
+        calc_top_header.addWidget(lbl_pct_tag)
+        calc_lay.addLayout(calc_top_header)
+
+        # ردیف ۱: ارزش اقلام انتخابی
+        f_row_frame = QFrame()
+        f_row_frame.setFixedHeight(28)
+        f_row_frame.setStyleSheet("background-color: #0E131F; border: 1px solid rgba(255, 255, 255, 0.04); border-radius: 5px;")
+        fr_lay = QHBoxLayout(f_row_frame)
+        fr_lay.setContentsMargins(10, 0, 10, 0)
+        fr_lay.addWidget(self._make_clean_label("ارزش اقلام انتخابی:", "font-family: 'Vazirmatn'; font-size: 11px; color: #94A3B8;"))
+        fr_lay.addStretch()
+        fr_lay.addWidget(self._make_clean_label(format_toman(tot_fee), "font-family: 'Segoe UI', 'Vazirmatn'; font-size: 11.5px; font-weight: 700; color: #F8FAFC;"))
+        calc_lay.addWidget(f_row_frame)
+
+        # ردیف ۲: دریافتی اقلام انتخابی
+        p_row_frame = QFrame()
+        p_row_frame.setFixedHeight(28)
+        p_row_frame.setStyleSheet("background-color: #0E131F; border: 1px solid rgba(255, 255, 255, 0.04); border-radius: 5px;")
+        pr_lay = QHBoxLayout(p_row_frame)
+        pr_lay.setContentsMargins(10, 0, 10, 0)
+        pr_lay.addWidget(self._make_clean_label("دریافتی اقلام انتخابی:", "font-family: 'Vazirmatn'; font-size: 11px; color: #94A3B8;"))
+        pr_lay.addStretch()
+        pr_lay.addWidget(self._make_clean_label(format_toman(tot_paid), "font-family: 'Segoe UI', 'Vazirmatn'; font-size: 11.5px; font-weight: 700; color: #10B981;"))
+        calc_lay.addWidget(p_row_frame)
+
+        # ردیف ۳ (در صورت وجود): مانده بدهی قبلی
+        if self.include_carry_over and prior_debt > 0:
+            d_row_frame = QFrame()
+            d_row_frame.setFixedHeight(28)
+            d_row_frame.setStyleSheet("background-color: #0E131F; border: 1px solid rgba(251, 146, 60, 0.2); border-radius: 5px;")
+            dr_lay = QHBoxLayout(d_row_frame)
+            dr_lay.setContentsMargins(10, 0, 10, 0)
+            dr_lay.addWidget(self._make_clean_label("مانده بدهی از پروژه‌های قبلی:", "font-family: 'Vazirmatn'; font-size: 11px; color: #FB923C;"))
+            dr_lay.addStretch()
+            dr_lay.addWidget(self._make_clean_label(format_toman(prior_debt), "font-family: 'Segoe UI', 'Vazirmatn'; font-size: 11.5px; font-weight: 800; color: #FB923C;"))
+            calc_lay.addWidget(d_row_frame)
+
+        # کادر برجسته، گسترده و کشیده مبلغ نهایی (پرکننده تمام ارتفاع خالی با عدد بزرگ در مرکز)
         final_box = QFrame()
-        final_box.setFixedHeight(44)
-        final_box_bg = "rgba(245, 158, 11, 0.12)" if final_payable > 0 else "rgba(16, 185, 129, 0.12)"
-        final_box_border = "rgba(245, 158, 11, 0.35)" if final_payable > 0 else "rgba(16, 185, 129, 0.35)"
-        final_box.setStyleSheet(f"background-color: {final_box_bg}; border: 1px solid {final_box_border}; border-radius: 6px;")
-        fb_lay = QHBoxLayout(final_box)
-        fb_lay.setContentsMargins(12, 0, 12, 0)
-        fb_lay.addWidget(self._make_clean_label("مبلغ نهایی قابل تسویه:", "font-family: 'Vazirmatn'; font-size: 11.5px; font-weight: 800; color: #F8FAFC;"))
-        fb_lay.addStretch()
-        lbl_rem_amount = self._make_clean_label(format_toman(final_payable), f"font-family: 'Vazirmatn'; font-size: 15px; font-weight: 900; color: {'#F59E0B' if final_payable > 0 else '#10B981'};")
-        fb_lay.addWidget(lbl_rem_amount)
-        calc_lay.addWidget(final_box)
+        final_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        if final_payable > 0:
+            final_box_bg = "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1E1610, stop:1 #17110C)"
+            final_box_border = "rgba(245, 158, 11, 0.55)"
+            status_text = "مانده قابل پرداخت"
+            status_color = "#F59E0B"
+            rem_col = "#FBBF24"
+        else:
+            final_box_bg = "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0B1C1A, stop:1 #0A1715)"
+            final_box_border = "rgba(16, 185, 129, 0.55)"
+            status_text = "تسویه کامل شده ✓"
+            status_color = "#10B981"
+            rem_col = "#34D399"
+
+        final_box.setStyleSheet(f"""
+            QFrame {{
+                background: {final_box_bg};
+                border: 1.5px solid {final_box_border};
+                border-radius: 8px;
+            }}
+        """)
+        fb_lay = QVBoxLayout(final_box)
+        fb_lay.setContentsMargins(14, 8, 14, 10)
+        fb_lay.setSpacing(4)
+
+        # نوار بالای کادر تسویه: عنوان در راست و وضعیت در چپ
+        fb_top = QHBoxLayout()
+        fb_top.setContentsMargins(0, 0, 0, 0)
+        fb_top.addWidget(self._make_clean_label("مبلغ نهایی قابل تسویه:", "font-family: 'Vazirmatn'; font-size: 11.5px; font-weight: 700; color: #CBD5E1;"))
+        fb_top.addStretch()
+        fb_top.addWidget(self._make_clean_label(status_text, f"font-family: 'Vazirmatn'; font-size: 10px; font-weight: 800; color: {status_color};"))
+        fb_lay.addLayout(fb_top)
+
+        # بخش اصلی مرکز کادر: مبلغ به صورت درشت، بزرگ و کاملاً وسط‌چین
+        lbl_rem_amount = self._make_clean_label(
+            format_toman(final_payable), 
+            f"font-family: 'Vazirmatn'; font-size: 22px; font-weight: 900; color: {rem_col};"
+        )
+        lbl_rem_amount.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        fb_lay.addWidget(lbl_rem_amount, stretch=1)
+
+        calc_lay.addWidget(final_box, stretch=1)
 
         bottom_panel.addWidget(calc_box, stretch=2)
         self.c_lay.addLayout(bottom_panel)
 
-        # ۵. مهر و امضا
-        sign_path = self.settings.get("studio_signature_path", "")
-        if sign_path and Path(sign_path).exists():
-            try:
-                sign_box = QHBoxLayout()
-                sign_box.setContentsMargins(10, 0, 10, 0)
-                sign_box.addStretch()
-                
-                sign_col = QVBoxLayout()
-                sign_col.setSpacing(2)
-                sign_col.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                sign_col.addWidget(self._make_clean_label("مهر و امضای تدوین‌گر:", "font-family: 'Vazirmatn'; font-size: 10.5px; color: #8F909D;"))
-                s_img = QLabel()
-                s_img.setFixedHeight(54)
-                s_img.setStyleSheet("background: transparent !important; border: none !important;")
-                s_img.setPixmap(QPixmap(sign_path).scaled(130, 54, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-                sign_col.addWidget(s_img)
-                sign_box.addLayout(sign_col)
-                self.c_lay.addLayout(sign_box)
-            except Exception:
-                pass
+        # ۵. نوار اصالت سند و هش رمزنگاری‌شده ضدجعل
+        raw_hash_source = f"{self.client_id}:{safe_doc_num}:{final_payable}:{today_str}"
+        secret_key = b"CutterLogProStudioMasterKey_2026"
+        computed_hash = hmac.new(secret_key, raw_hash_source.encode("utf-8"), hashlib.sha256).hexdigest()[:16].upper()
+        formatted_hash_seal = f"CLP-{computed_hash[:4]}-{computed_hash[4:8]}-{computed_hash[8:12]}"
 
-        # ۶. نوار اصالت سند
         software_badge = QFrame()
         software_badge.setFixedHeight(36)
         software_badge.setStyleSheet("""
@@ -676,6 +891,21 @@ class StudioInvoiceDialog(StudioBaseDialog):
 
         sb_lay.addStretch()
 
+        lbl_crypto_seal = QLabel(f"SEAL: {formatted_hash_seal}")
+        lbl_crypto_seal.setToolTip("شناسه هش اصالت فاکتور جهت جلوگیری از جعل سند")
+        lbl_crypto_seal.setStyleSheet("""
+            font-family: 'Segoe UI', monospace;
+            font-size: 9px;
+            font-weight: 800;
+            color: #A5B4FC;
+            background: rgba(99, 102, 241, 0.16);
+            border: 1px solid rgba(99, 102, 241, 0.35);
+            border-radius: 4px;
+            padding: 2px 7px;
+            letter-spacing: 0.8px;
+        """)
+        sb_lay.addWidget(lbl_crypto_seal)
+
         lbl_promo_en = self._make_clean_label(
             "Official Post-Production Workflow & Ledger",
             "font-family: 'Segoe UI', sans-serif; font-size: 9.5px; font-weight: 600; color: #818CF8; letter-spacing: 0.3px;"
@@ -706,14 +936,14 @@ class StudioInvoiceDialog(StudioBaseDialog):
             return
 
         try:
-            success = StudioInvoiceImageExporter.export_widget_to_image(self.invoice_content_widget, file_path, scale_factor=2.0)
+            success = StudioInvoiceImageExporter.export_widget_to_image(self.invoice_content_widget, file_path, scale_factor=3.5)
             if success:
                 StudioConfirmDialog.ask(
                     self, 
                     title="موفقیت", 
-                    message="تصویر فاکتور رسمی با موفقیت ذخیره شد.", 
-                    details=f"مسیر ذخیره:\n{file_path}",
-                    confirm_text="متوجه شدم",
+                    message="تصویر فاکتور رسمی با بالاترین کیفیت ذخیره شد.", 
+                    details=f"مسیر ذخیره:\n{file_path}", 
+                    confirm_text="متوجه شدم", 
                     icon_name="check"
                 )
             else:
@@ -721,7 +951,7 @@ class StudioInvoiceDialog(StudioBaseDialog):
                     self, 
                     title="خطا", 
                     message="خطا در ذخیره تصویر فاکتور.", 
-                    is_danger=True,
+                    is_danger=True, 
                     icon_name="alert"
                 )
         except Exception as err:
@@ -729,6 +959,6 @@ class StudioInvoiceDialog(StudioBaseDialog):
                 self, 
                 title="خطا", 
                 message=f"خطای سیستمی رخ داد:\n{err}", 
-                is_danger=True,
+                is_danger=True, 
                 icon_name="alert"
             )

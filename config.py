@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 APP_NAME = "CutterLog"
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.6.5"
 
 # ----------------------------------------------------
 # 1. مدیریت مسیرهای استاندارد ذخیره‌سازی داده (Cross-Platform)

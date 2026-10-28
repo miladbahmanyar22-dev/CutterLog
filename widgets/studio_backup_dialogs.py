@@ -203,7 +203,7 @@ class StudioImportBackupDialog(StudioBaseDialog):
         m_lay.setSpacing(4)
 
         date_val = self.manifest_info.get("created_at_jalali", "نامشخص")
-        ver_val = self.manifest_info.get("app_version", "۱.۶.۰")
+        ver_val = self.manifest_info.get("app_version", "۱.۶.۵")
         studio_val = self.manifest_info.get("studio_name") or self.manifest_info.get("editor_name") or "استودیو"
 
         lbl_top = QLabel(f"📦 مبدأ پشتیبان: <b style='color:#F8FAFC;'>{studio_val}</b> | نسخه نرم‌افزار: <b style='color:#818CF8;'>{ver_val}</b>")

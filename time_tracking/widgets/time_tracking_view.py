@@ -985,6 +985,14 @@ class TimeTrackingView(QWidget):
             progress_ratio=ratio
         )
 
+        # به‌روزرسانی زنده کارت تمرکز بر مبنای کارکرد واقعی
+        f_pct, f_label, _ = self.engine.get_today_focus_metrics()
+        self.card_focus.update_values(
+            main_val=f"{to_persian_numbers(f_pct)}٪",
+            sub_val=f_label,
+            progress_ratio=f_pct / 100.0
+        )
+
         cur_proj = next((p for p in self.cached_uncompleted_projects if p["id"] == self.selected_project_id), None)
         if cur_proj and hasattr(self, "nle_timeline_card"):
             self.nle_timeline_card.update_project_timeline(
@@ -1014,6 +1022,14 @@ class TimeTrackingView(QWidget):
             main_val=f"{to_persian_numbers(pct_val)}٪",
             sub_val=f"{rem_h:02d}:{rem_m:02d} باقی‌مانده",
             progress_ratio=ratio
+        )
+
+        # محاسبه و نمایش دقیق تمرکز امروز از سوابق ثبت‌شده
+        f_pct, f_label, _ = self.engine.get_today_focus_metrics()
+        self.card_focus.update_values(
+            main_val=f"{to_persian_numbers(f_pct)}٪",
+            sub_val=f_label,
+            progress_ratio=f_pct / 100.0
         )
 
         self._load_uncompleted_projects()
@@ -1362,7 +1378,7 @@ class TimeTrackingView(QWidget):
         dur_str = safe_format_hms(active_sec)
         clip_name = "کلیپ انتخابی"
         
-        cur_proj = next((p for p in self.cached_uncompleted_projects if p["id"] == self.engine.current_project_id), None)
+        cur_proj = next((p for p in self.cached_uncompleted_projects if p["id"] == self.selected_project_id), None)
         if cur_proj:
             for c in cur_proj.get("clips", []):
                 if c["id"] == self.engine.current_clip_id:
@@ -1378,8 +1394,22 @@ class TimeTrackingView(QWidget):
                         sess.note = diag.session_note
                         session.commit()
 
+            # ۱. متوقف کردن سشن و ذخیره در دیتابیس
             self.engine.pause_session(auto=False)
-            global_signals.show_toast.emit("جلسه کاری متوقف شد.", "info")
+            
+            # ۲. واکشی مجموع واقعی و جدید کارکرد کلیپ از دیتابیس برای جلوگیری از باگ ۵۵ دقیقه
+            total_spent_now = 0
+            if self.engine.current_clip_id:
+                with db.get_session() as session:
+                    total_spent_now = session.execute(
+                        select(func.sum(WorkSession.active_duration)).where(WorkSession.clip_id == self.engine.current_clip_id)
+                    ).scalar() or 0
+
+            # ۳. به‌روزرسانی کارت ساعت با مقدار خالص
+            self.timer_card.accumulated_spent_seconds = total_spent_now
+            self.timer_card.update_display_state()
+
+            global_signals.show_toast.emit("جلسه کاری متوقف و ذخیره شد.", "info")
             self.refresh_dashboard()
 
     def _handle_finish_clip_direct(self):
